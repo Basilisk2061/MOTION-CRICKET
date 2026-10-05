@@ -5,6 +5,7 @@ import { BowlGesture } from './bowlGesture'
 import { BowlingController } from './bowlingController'
 import PhoneBowlingPanel from './PhoneBowlingPanel'
 import { PUBLIC_RELAY, currentSession } from './publicSession'
+import { watchTransport, isTransportHeartbeat } from './transportHealth'
 
 type PermissionAPI = { requestPermission?: () => Promise<string> }
 const vector = (v: { x: number | null; y: number | null; z: number | null } | null) =>
@@ -30,13 +31,20 @@ export default function PhoneController() {
 
   useEffect(() => {
     if (PUBLIC_RELAY && !currentSession()) { setNotice('Open the session link or QR code from the desktop game.'); return }
+    const debug = new URLSearchParams(location.search).get('motionDebug') === '1'
+    const log = (text: string) => { if (debug) console.info(`[${new Date().toISOString()}] PHONE SENDER ${text}`) }
+    let attempted = 0, accepted = 0
+    let stopHealth = () => {}
     let disposed = false, retry: ReturnType<typeof setTimeout>, frame = 0, sent = -1, sentAt = 0, poseAt=0
     const connect = () => {
       if (disposed) return
+      log('CONNECT / RECONNECT ATTEMPT')
       const ws = new WebSocket(socketURL('/phone-ws?role=phone'))
+      stopHealth = watchTransport(ws)
       socket.current = ws
-      ws.onopen = () => { connected.current = true; sent = -1 }
+      ws.onopen = () => { connected.current = true; sent = -1; log('OPEN') }
       ws.onmessage = event => {
+        if (isTransportHeartbeat(event.data)) return
         try {
           const m = JSON.parse(event.data)
           if(m.type==='bowling-lab-state')lab.current={active:m.active===true,ready:m.ready===true,at:performance.now()}
@@ -44,13 +52,14 @@ export default function PhoneController() {
             gameReady.current = { ready: m.ready, at: performance.now() }
         } catch { /* Ignore unrelated messages. */ }
       }
-      ws.onerror = () => ws.close()
+      ws.onerror = () => { log('ERROR'); ws.close() }
       ws.onclose = event => {
+        log(`CLOSE code=${event.code} reason=${JSON.stringify(event.reason)} clean=${event.wasClean}`)
         connected.current = false
         lab.current={active:false,ready:false,at:0}
         gameReady.current.ready = false
         if (event.code === 1008) setNotice('Another phone is connected. Close its controller page first.')
-        if (!disposed) retry = setTimeout(connect, 1000)
+        if (!disposed) { log('RECONNECT SCHEDULED 1000ms'); retry = setTimeout(connect, 1000) }
       }
     }
     const tick = (now: number) => {
@@ -68,14 +77,24 @@ export default function PhoneController() {
       }
       if (!document.hidden && ws?.readyState === WebSocket.OPEN && ws.bufferedAmount < 4096
         && d.message && now - d.at < 200 && sent !== d.sequence && now - sentAt >= 1000 / 60) {
-        ws.send(JSON.stringify(d.message)); sent = d.sequence; sentAt = now
+        if (debug) attempted++
+        ws.send(JSON.stringify(d.message)); if (debug) accepted++; sent = d.sequence; sentAt = now
       }
       frame = requestAnimationFrame(tick)
     }
     connect(); frame = requestAnimationFrame(tick)
     const ui = setInterval(() => refresh(n => n + 1), 100)
+    const diagnostic = debug ? setInterval(() => {
+      const ws = socket.current, d = data.current, now = performance.now()
+      const reason = document.hidden ? 'HIDDEN' : ws?.readyState !== WebSocket.OPEN ? 'SOCKET_NOT_OPEN'
+        : ws.bufferedAmount >= 4096 ? 'BUFFERED' : !d.message ? 'NO_MESSAGE' : now-d.at >= 200 ? 'STALE_SENSOR'
+        : sent === d.sequence ? 'NO_NEW_SAMPLE' : now-sentAt < 1000/60 ? 'RATE_LIMIT' : 'NONE'
+      log(`sensorAge=${d.at ? Math.round(now-d.at)+'ms' : 'NONE'} WS=${ws ? ['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState] : 'NONE'} attempted=${attempted} acceptedCalls=${accepted} buffered=${ws?.bufferedAmount ?? 0} suppressed=${reason}`)
+    }, 1000) : undefined
     return () => {
       disposed = true; clearTimeout(retry); clearInterval(ui); cancelAnimationFrame(frame)
+      stopHealth()
+      clearInterval(diagnostic)
       connected.current = false; socket.current?.close()
     }
   }, [])

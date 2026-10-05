@@ -56,7 +56,14 @@ class WebSocketBridge:
         self.send_hz = 0.0
         self.loop = None
         self.wake_events = set()
+        self.debug = os.environ.get('MOTION_DEBUG') == '1'
+        self.debug_output_at = self.debug_send_at = None
+        self.debug_outputs = self.debug_sends = self.debug_timeouts = 0
         self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def _debug(self, text):
+        if self.debug:
+            print(f'[{time.strftime("%Y-%m-%dT%H:%M:%S%z")}] TRACKER {text}', flush=True)
 
     def start(self):
         self.thread.start()
@@ -67,6 +74,9 @@ class WebSocketBridge:
         payload = controller_json(controller, calibrated, telemetry)
         with self.lock:
             self.latest['controller'] = payload
+            if self.debug:
+                self.debug_outputs += 1
+                self.debug_output_at = time.perf_counter()
         self._wake()
 
     def publish_bat(self, message):
@@ -122,12 +132,18 @@ class WebSocketBridge:
         print(f"WebSocket: public relay / session {self.session}")
         while not self.stop.is_set():
             try:
+                self._debug('CONNECT ATTEMPT')
                 async with connect(target, compression=None, max_queue=1, write_limit=4096,
-                                   max_size=4096, open_timeout=10, close_timeout=.5) as socket:
+                                   max_size=4096, open_timeout=10, close_timeout=.5,
+                                   ping_interval=2, ping_timeout=3) as socket:
+                    self._debug('OPEN / CONNECTED (including reconnect)')
                     await self._client(socket)
             except Exception as error:
+                self._debug(f'CONNECT ERROR {type(error).__name__}: {error}')
                 print(f"Relay disconnected ({type(error).__name__}); retrying. CV continues.")
-            for _ in range(20):
+            # Native heartbeat detects half-open streams in a few seconds; retry off the CV thread.
+            self._debug('RECONNECT SCHEDULED 1000ms')
+            for _ in range(10):
                 if self.stop.is_set():
                     return
                 await asyncio.sleep(.1)
@@ -139,6 +155,9 @@ class WebSocketBridge:
         event = asyncio.Event()
         self.wake_events.add(event)
         sent, since = 0, time.perf_counter()
+        diagnostic = None
+        if self.debug:
+            diagnostic = asyncio.create_task(self._debug_status(socket))
         try:
             while not self.stop.is_set():
                 if socket.close_code is not None:
@@ -152,6 +171,9 @@ class WebSocketBridge:
                         await asyncio.wait_for(socket.send(payload), timeout=.25)
                         previous[kind] = payload
                         if kind == 'controller':
+                            if self.debug:
+                                self.debug_sends += 1
+                                self.debug_send_at = time.perf_counter()
                             sent += 1
                             elapsed = time.perf_counter() - since
                             if elapsed >= 1:
@@ -161,11 +183,31 @@ class WebSocketBridge:
                     await asyncio.wait_for(event.wait(), timeout=.1)
                 except TimeoutError:
                     pass
-        except (ConnectionClosed, TimeoutError):
-            pass
+        except ConnectionClosed as error:
+            self._debug(f'CONNECTION CLOSED {error}')
+        except TimeoutError:
+            if self.debug:
+                self.debug_timeouts += 1
+            self._debug('SEND TIMEOUT 250ms')
         finally:
+            if diagnostic is not None:
+                diagnostic.cancel()
+            self._debug(f'CLOSE code={socket.close_code} reason={socket.close_reason}')
             self.wake_events.discard(event)
             self.clients -= 1
             if not self.clients:
                 self.send_hz = 0.0
             print(f"Clients: {self.clients}")
+
+    async def _debug_status(self, socket):
+        outputs, sends, at = self.debug_outputs, self.debug_sends, time.perf_counter()
+        while True:
+            await asyncio.sleep(1)
+            now = time.perf_counter()
+            age = lambda value: 'NONE' if value is None else f'{(now-value)*1000:.0f}ms'
+            with self.lock:
+                count, output_at = self.debug_outputs, self.debug_output_at
+            self._debug(f'outputHz={(count-outputs)/(now-at):.1f} outputAge={age(output_at)} '
+                        f'WS={socket.state.name} sendHz={(self.debug_sends-sends)/(now-at):.1f} '
+                        f'sends={self.debug_sends} sendAge={age(self.debug_send_at)} timeouts={self.debug_timeouts}')
+            outputs, sends, at = count, self.debug_sends, now

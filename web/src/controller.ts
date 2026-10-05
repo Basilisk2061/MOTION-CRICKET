@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Vector3 } from 'three'
+import { watchTransport, isTransportHeartbeat } from './transportHealth'
 import { parsePhone, socketURL, type PhoneMessage } from './phone'
 import { parseBowlingRelease, parseBowlingPose, type BowlingPose, type BowlingRelease } from './bowlingController'
 
@@ -106,6 +107,21 @@ export function parseController(raw: string): ControllerMessage | null {
 }
 
 export function useController() {
+  // Opt-in transport diagnostics only: append ?motionDebug=1 to the game URL.
+  const debugTransport = new URLSearchParams(location.search).get('motionDebug') === '1'
+  const logTransport = (channel: string, event: string) => {
+    if (debugTransport) console.info(`[${new Date().toISOString()}] GAME WS ${channel} ${event}`)
+  }
+  const debugCounts = useRef({ cvRaw: 0, cvAccepted: 0, phoneRaw: 0, phoneAccepted: 0, cvRawAt: 0, phoneRawAt: 0 })
+  const relayDiagnostic = (data: unknown) => {
+    if (!debugTransport || typeof data !== 'string') return false
+    try {
+      const m = JSON.parse(data)
+      if (m.type !== 'relay-debug') return false
+      console.info(`[${new Date().toISOString()}] RELAY`, m)
+      return true
+    } catch { return false }
+  }
   const telemetry=useRef({rxHz:0,sampleDtMs:0})
   const phone = useRef<{ message: PhoneMessage; received: number } | null>(null)
   const phoneConnected = useRef(false)
@@ -142,15 +158,23 @@ export function useController() {
     let retry: ReturnType<typeof setTimeout>
     let sequence = 0
     let rxCount=0,rxSince=performance.now()
+    let opened = false
+    let stopHealth = () => {}
     const connect = () => {
       if (disposed) return
+      logTransport('CV', 'RECONNECT ATTEMPT / CONNECT')
       socket = new WebSocket(socketURL('/cv-ws'))
-      socket.onopen = () => { connected.current = true }
+      stopHealth = watchTransport(socket)
+      socket.onopen = () => { connected.current = true; logTransport('CV', opened ? 'OPEN / RECONNECTED' : 'OPEN'); opened = true }
       socket.onmessage = event => {
+        if (isTransportHeartbeat(event.data)) return
+        if (relayDiagnostic(event.data)) return
+        if (debugTransport) { debugCounts.current.cvRaw++; debugCounts.current.cvRawAt = performance.now() }
         const marker = typeof event.data === 'string' ? parseBat(event.data) : null
         if (marker) bat.current = { message: marker, received: performance.now(), sequence: ++sequence }
         const message = typeof event.data === 'string' ? parseController(event.data) : null
         if (message && (!latest.current || message.timestamp>latest.current.message.timestamp)) {
+          if (debugTransport) debugCounts.current.cvAccepted++
           const now=performance.now()
           telemetry.current.sampleDtMs=latest.current?(message.timestamp-latest.current.message.timestamp)*1000:0
           rxCount++
@@ -158,16 +182,25 @@ export function useController() {
           latest.current = { message, received: performance.now(), sequence: ++sequence }
         }
       }
-      socket.onerror = () => socket?.close()
-      socket.onclose = () => {
+      socket.onerror = () => { logTransport('CV', 'ERROR'); socket?.close() }
+      socket.onclose = event => {
+        logTransport('CV', `CLOSE code=${event.code} reason=${JSON.stringify(event.reason)} clean=${event.wasClean}`)
         connected.current = false
         latest.current = null
         telemetry.current.rxHz=0;rxCount=0;rxSince=performance.now()
         bat.current = null
-        if (!disposed) retry = setTimeout(connect, 1000)
+        if (!disposed) { logTransport('CV', 'RECONNECT SCHEDULED 1000ms'); retry = setTimeout(connect, 1000) }
       }
     }
     connect()
+    const diagnostic = debugTransport ? setInterval(() => {
+      const now = performance.now()
+      const age = (received: number | undefined) => received === undefined ? 'NONE' : `${Math.round(now - received)}ms`
+      const state = (ws: WebSocket | null | undefined) => ws ? ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][ws.readyState] : 'NONE'
+      logTransport('STATUS', `CV=${state(socket)} PHONE=${state(phoneSocket.current)} CV age=${age(latest.current?.received)} PHONE age=${age(phone.current?.received)}`)
+      const c = debugCounts.current
+      logTransport('COUNTS', `CV raw=${c.cvRaw} accepted=${c.cvAccepted} rawAge=${age(c.cvRawAt || undefined)} PHONE raw=${c.phoneRaw} accepted=${c.phoneAccepted} rawAge=${age(c.phoneRawAt || undefined)} (raw includes non-controller messages)`)
+    }, 1000) : undefined
     // The render loop reads the newest snapshot; UI updates at only 10 Hz.
     const ui = setInterval(() => setDisplay({
       connected: connected.current,
@@ -176,8 +209,10 @@ export function useController() {
     }), 100)
     return () => {
       disposed = true
+      stopHealth()
       clearTimeout(retry)
       clearInterval(ui)
+      clearInterval(diagnostic)
       connected.current = false
       latest.current = null
       bat.current = null
@@ -189,14 +224,22 @@ export function useController() {
   }, [])
   useEffect(() => {
     let disposed = false, socket: WebSocket, retry: ReturnType<typeof setTimeout>
+    let opened = false
+    let stopHealth = () => {}
     const connect = () => {
       if (disposed) return
+      logTransport('PHONE', 'RECONNECT ATTEMPT / CONNECT')
       socket = new WebSocket(socketURL('/phone-ws?role=game'))
+      stopHealth = watchTransport(socket)
       phoneSocket.current = socket
+      socket.onopen = () => { logTransport('PHONE', opened ? 'OPEN / RECONNECTED' : 'OPEN'); opened = true }
       socket.onmessage = event => {
+        if (isTransportHeartbeat(event.data)) return
+        if (relayDiagnostic(event.data)) return
+        if (debugTransport) { debugCounts.current.phoneRaw++; debugCounts.current.phoneRawAt = performance.now() }
         if (typeof event.data !== 'string') return
         const message = parsePhone(event.data)
-        if (message) { phone.current = { message, received: performance.now() }; return }
+        if (message) { if (debugTransport) debugCounts.current.phoneAccepted++; phone.current = { message, received: performance.now() }; return }
         try {
           const status = JSON.parse(event.data)
           const pose=parseBowlingPose(status)
@@ -210,14 +253,15 @@ export function useController() {
           }
         } catch { /* Ignore unrelated messages. */ }
       }
-      socket.onerror = () => socket.close()
-      socket.onclose = () => {
+      socket.onerror = () => { logTransport('PHONE', 'ERROR'); socket.close() }
+      socket.onclose = event => {
+        logTransport('PHONE', `CLOSE code=${event.code} reason=${JSON.stringify(event.reason)} clean=${event.wasClean}`)
         phoneConnected.current = false; phone.current = null
-        if (!disposed) retry = setTimeout(connect, 1000)
+        if (!disposed) { logTransport('PHONE', 'RECONNECT SCHEDULED 1000ms'); retry = setTimeout(connect, 1000) }
       }
     }
     connect()
-    return () => { disposed = true; clearTimeout(retry); socket?.close(); phoneSocket.current = null }
+    return () => { disposed = true; stopHealth(); clearTimeout(retry); socket?.close(); phoneSocket.current = null }
   }, [])
   return { latest, bat, phone, phoneConnected, connected, display, telemetry, bowlRequests, publishBowlReady,
     bowlingRelease,bowlingPose,publishBowlingLab }

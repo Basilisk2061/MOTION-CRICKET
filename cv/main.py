@@ -109,7 +109,7 @@ def draw_direction_debug(frame, pose):
     cv2.arrowedLine(frame, tuple(grip), tuple(velocity_tip), (255, 160, 30), 2)
 
 
-def main():
+def main(camera_index=0, stop_event=None, calibrate_event=None, on_status=None, bridge=None):
     if sys.platform == "win32":
         import ctypes
         # Use physical pixels for HighGUI windows and mouse events on scaled displays.
@@ -123,10 +123,12 @@ def main():
     if not MODEL_PATH.is_file():
         raise FileNotFoundError(f"Pose model not found: {MODEL_PATH}")
 
-    camera = cv2.VideoCapture(0)
+    if on_status:
+        on_status("Starting camera")
+    camera = cv2.VideoCapture(camera_index)
     if not camera.isOpened():
         camera.release()
-        raise RuntimeError("Could not open the default webcam (camera index 0).")
+        raise RuntimeError(f"Could not open webcam (camera index {camera_index}).")
     print(f"Camera: {camera.getBackendName()} / {camera.get(cv2.CAP_PROP_FRAME_WIDTH):.0f}x"
           f"{camera.get(cv2.CAP_PROP_FRAME_HEIGHT):.0f} / reported {camera.get(cv2.CAP_PROP_FPS):.1f} FPS / "
           f"buffer {camera.get(cv2.CAP_PROP_BUFFERSIZE):.0f}; properties unchanged")
@@ -144,7 +146,7 @@ def main():
     previous_time = time.perf_counter()
     fps = 0.0
     debug_enabled = False
-    bridge = WebSocketBridge()
+    bridge = bridge if bridge is not None else WebSocketBridge()
     markers = MarkerTracker()
     last_timestamp_ms = -1
     input_scale_index = 0
@@ -153,7 +155,7 @@ def main():
     try:
         bridge.start()
         with vision.PoseLandmarker.create_from_options(options) as landmarker:
-            while True:
+            while stop_event is None or not stop_event.is_set():
                 read_started = time.perf_counter()
                 success, frame = camera.read()
                 read_ms = (time.perf_counter() - read_started) * 1000
@@ -216,6 +218,10 @@ def main():
                     cv2.putText(display, "GRIP (image proxy)", (point[0]+10, point[1]+16),
                                 cv2.FONT_HERSHEY_SIMPLEX, .4, (255, 0, 255), 1)
                 source = world_data.get("grip_status", "LOST")
+                if on_status:
+                    connection = "Game connected" if bridge.clients else "Connecting to game"
+                    tracking = "Tracking" if source != "LOST" else "Right hand not visible"
+                    on_status(f"Camera ready | {connection}\n{tracking} | {controller.calibration_state}")
                 def xyz(value):
                     return "--" if value is None else " ".join(f"{v:+.3f}" for v in value)
                 lines = [f"RIGHT HAND: {source} / {world_data.get('arm_reason', 'NONE')}",
@@ -249,7 +255,9 @@ def main():
                     markers.bounds = bounds
                     world_tracker.reset()
                     jitter = StationaryJitter()
-                if key in (ord("c"), ord("C")):
+                if key in (ord("c"), ord("C")) or (calibrate_event is not None and calibrate_event.is_set()):
+                    if calibrate_event is not None:
+                        calibrate_event.clear()
                     markers.begin_calibration(now)
                     world_tracker.begin_calibration()
                     jitter = StationaryJitter()

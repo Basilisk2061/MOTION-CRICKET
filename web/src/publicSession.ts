@@ -25,5 +25,6 @@ export function relaySocketURL(path: string, origin = location.origin, session =
   relay.searchParams.set('session', session)
   relay.searchParams.set('role', incoming.searchParams.get('role') === 'phone' ? 'phone' : 'game')
   if (relay.searchParams.get('role') === 'game') relay.searchParams.set('channel', incoming.pathname === '/cv-ws' ? 'cv' : 'phone')
+  if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('motionDebug') === '1') relay.searchParams.set('motionDebug', '1')
   return relay.href
 }
