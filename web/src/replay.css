@@ -1,0 +1,10 @@
+.replay-overlay{position:fixed;inset:0;z-index:100;pointer-events:auto;color:#fff;font-family:Arial,sans-serif}
+.replay-tag{position:absolute;top:20px;left:20px;display:flex;align-items:center;background:#101010;border-left:3px solid #fff;font-size:11px;letter-spacing:.13em}
+.replay-tag strong{padding:10px 12px}.replay-tag span{padding:10px 12px;background:#303030;font-size:10px}
+.replay-skip{position:absolute;right:20px;bottom:20px;padding:10px 12px;border:1px solid #777;background:#111;color:white;font:11px Arial,sans-serif;cursor:pointer}
+.replay-skip span{margin-left:12px;color:#aaa;font-size:9px}.replay-cut{position:absolute;inset:0;pointer-events:none;background:#080808;opacity:0;animation:replay-in .16s ease-out}
+.replay-exiting .replay-cut{opacity:1;animation:replay-out .16s ease-in}
+.replay-returning .replay-cut{animation:replay-in .16s ease-out}
+.batting-view:has(.replay-overlay)>:not(:has(canvas)):not(.replay-overlay){visibility:hidden}
+@keyframes replay-in{from{opacity:1}to{opacity:0}}@keyframes replay-out{from{opacity:0}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){.replay-cut{animation:none}}

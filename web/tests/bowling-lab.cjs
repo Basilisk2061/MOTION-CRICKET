@@ -1,0 +1,68 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),ts=require('typescript')
+const {Quaternion,Euler,Vector3}=require('three'),cache=new Map()
+function load(name){
+ if(cache.has(name))return cache.get(name)
+ const m={exports:{}}
+ const code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src',name+'.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText
+ new Function('require','module','exports',code)(id=>id.startsWith('./')?load(id.slice(2)):require(id),m,m.exports)
+ cache.set(name,m.exports);return m.exports
+}
+const {MENU_CHOICES,menuBack}=load('menuNavigation'),{GameModes}=load('gameMode'),{SessionScore}=load('sessionScore')
+assert.equal(MENU_CHOICES.MAIN[0].page,'PLAY')
+assert.equal(MENU_CHOICES.PLAY[0].page,'BATTING');assert.equal(MENU_CHOICES.PLAY[1].page,'BOWLING')
+assert.equal(MENU_CHOICES.BOWLING[0].lab,true)
+assert.equal(menuBack('BOWLING'),'PLAY');assert.equal(menuBack('BATTING'),'PLAY');assert.equal(menuBack('PLAY'),'MAIN')
+const score=new SessionScore(),modes=new GameModes(score,()=>.5)
+modes.choose(MENU_CHOICES.BATTING[0].mode);assert.equal(modes.status,'PLAYING');assert.equal(score.overs,null);assert.equal(score.maxWickets,1)
+modes.menu();modes.choose(MENU_CHOICES.BATTING[1].mode);assert.equal(modes.status,'INTRO');assert.equal(score.overs,3);assert.equal(score.maxWickets,10)
+modes.begin();assert.equal(modes.status,'PLAYING')
+const {BowlingController,TouchRelease,volumeDownKey,parseBowlingRelease,bowlingParameters}=load('bowlingController')
+const {BowlingPhysics}=load('bowlingPhysics')
+const batting=new Quaternion().setFromEuler(new Euler(.1,.2,.3)),saved=batting.clone(),controller=new BowlingController()
+controller.calibrate(new Quaternion());assert(batting.equals(saved))
+assert.notEqual(controller.calibration.reference,batting,'bowling owns a different reference object')
+const gate=new TouchRelease();assert(!gate.up());gate.down(true);assert(gate.up());assert(!gate.up());gate.down(true);gate.cancel();assert(!gate.up());assert(!gate.down(false))
+assert(volumeDownKey({key:'AudioVolumeDown'}));assert(volumeDownKey({key:'VolumeDown'}));assert(!volumeDownKey({key:'AudioVolumeDown',repeat:true}));assert(!volumeDownKey({key:'ArrowDown'}))
+for(let t=100;t<=200;t+=10)controller.sample(new Quaternion(),new Vector3(3,1,0),t)
+const release=controller.release('TOUCH_RELEASE',200)
+assert(release);assert.deepEqual(parseBowlingRelease(release),release);assert.equal(release.source,'TOUCH_RELEASE')
+assert(!controller.release('VOLUME_DOWN',210),'one action cannot release twice')
+assert(!controller.release('VOLUME_DOWN',1000),'stale motion cannot release')
+for(let t=1100;t<=1200;t+=10)controller.sample(new Quaternion(),new Vector3(3,1,0),t)
+assert.equal(controller.release('VOLUME_DOWN',1200).source,'VOLUME_DOWN','same normalized release path')
+assert(!parseBowlingRelease({...release,orientation:{x:NaN,y:0,z:0,w:1}}));assert(!parseBowlingRelease({...release,source:'UNKNOWN'}))
+function event(pitch=0,yaw=0,omega=3,axial=0){const q=new Quaternion().setFromEuler(new Euler(pitch,yaw,0));return {...release,aim:undefined,angularSpeed:undefined,orientation:{x:q.x,y:q.y,z:q.z,w:q.w},angularVelocity:{x:omega,y:axial,z:0}}}
+const center=bowlingParameters(event()),left=bowlingParameters(event(0,.3)),right=bowlingParameters(event(0,-.3))
+assert(left.line>center.line && right.line<center.line);assert.equal(center.line,-.12)
+assert(bowlingParameters(event(.3)).bounceZ<center.bounceZ);assert(bowlingParameters(event(-.3)).bounceZ>center.bounceZ)
+assert(bowlingParameters(event(0,0,10)).speed>center.speed);assert(bowlingParameters(event(0,0,.1)).speed<center.speed)
+assert(bowlingParameters(event(0,0,3,2)).spin>0);assert(bowlingParameters(event(0,0,3,-2)).spin<0)
+assert.equal(bowlingParameters(event(0,0,3,.1)).spin,0)
+assert.deepEqual(bowlingParameters(event()),center)
+assert(Math.abs(bowlingParameters(event(.001,.001)).speed-center.speed)<.001)
+assert.equal(bowlingParameters(event(.001,.001)).line,center.line,'orientation micro-noise causes no release error')
+assert.equal(bowlingParameters(event(.001,.001)).bounceZ,center.bounceZ)
+for(const pitch of [-.8,0,.8])for(const yaw of [-.8,0,.8])for(const omega of [0,4,40]){
+ const p=bowlingParameters(event(pitch,yaw,omega,2)),g=new BowlingPhysics()
+ assert(p.speed>=11 && p.speed<=23 && Math.abs(p.line)<=1 && p.bounceZ>=-10 && p.bounceZ<=-1.2+1e-9 && Math.abs(p.spin)<=1.2)
+ assert(g.release(p));assert(!g.release(p))
+ let traveled=false
+ for(let i=0;i<3000 && g.state==='FLIGHT';i++){
+  const old=g.position.clone();g.step(1/240)
+  assert(g.position.toArray().every(Number.isFinite));assert(g.velocity.toArray().every(Number.isFinite))
+  assert(g.position.distanceTo(old)<.16,'continuous simulated flight')
+  traveled=traveled||g.position.z>=-.7
+ }
+ assert(g.bounced);assert(traveled);assert(Math.abs(g.bouncePosition.z-p.bounceZ)<1e-7)
+}
+const stumps=new BowlingPhysics();stumps.release(bowlingParameters({...event(),target:{x:0,z:-1.3}}))
+for(let i=0;i<2000 && stumps.state==='FLIGHT';i++)stumps.step(1/240)
+assert(stumps.hitStumps,'center delivery can hit real stump volume')
+for(let i=0;i<250;i++)stumps.step(1/240)
+assert(!stumps.ready,'wicket presentation remains visible beyond the old one-second pause')
+assert(stumps.wicketImpact,'authoritative impact survives the hold')
+for(let i=0;i<111;i++)stumps.step(1/240)
+assert(stumps.ready,'automatic re-bowl resumes after the shared 1.5-second wicket hold')
+const app=fs.readFileSync(path.join(__dirname,'../src/App.tsx'),'utf8')
+assert(app.includes("if(modes.status==='MENU')"));assert(app.includes('<BowlingLab'));assert(app.includes('<MainMenu'))
+console.log('PASS: menu paths/existing mode rules; independent calibration; release/touch/key normalization; stable/clamped line-length-pace-spin; 27 actual finite trajectories/preserved pitch/stumps/re-bowl')

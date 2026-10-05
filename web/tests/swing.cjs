@@ -1,0 +1,115 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs'), path = require('node:path'), ts = require('typescript')
+const { Vector3, Quaternion } = require('three')
+const cache = new Map()
+function load(name) {
+  if (cache.has(name)) return cache.get(name)
+  const source = fs.readFileSync(path.join(__dirname,'../src',`${name}.ts`),'utf8')
+  const module = { exports: {} }
+  const code = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText
+  new Function('require','module','exports',code)(id=>id.startsWith('./')?load(id.slice(2)):require(id),module,module.exports)
+  cache.set(name,module.exports); return module.exports
+}
+const { PhoneSwing, HandleContinuity, assistLevel } = load('swingContinuity')
+const { SWING_CONTINUITY: T } = load('gameplayTuning')
+const { Delivery, contactAssistMultiplier } = load('delivery')
+const swing = new PhoneSwing()
+assert.equal(swing.update(0,0,true,4,2),false)
+assert.equal(swing.update(40,0,true,4,2),false,'repeated render of one sample must not confirm swing')
+assert.equal(swing.update(40,40,true,0,0),false,'single spike rejected')
+assert.equal(swing.update(60,60,true,4,2),false)
+assert.equal(swing.update(80,80,true,4,2),false)
+assert.equal(swing.update(100,100,true,4,2),true)
+assert.equal(swing.update(120,120,true,1.5,.8),true,'hysteresis middle band')
+assert.equal(swing.update(140,140,true,0,0),true)
+assert.equal(swing.update(180,180,true,0,0),true)
+assert.equal(swing.update(220,220,true,0,0),false)
+assert.equal(swing.update(240,240,false,20,12),false,'stale phone cannot swing')
+assert.equal(swing.update(500,240,true,20,12),false,'old high-rate packet must not sustain swing intent')
+
+const h = new HandleContinuity(), origin = new Vector3(0,1.05,-.65)
+h.reset(origin)
+h.update(0,.02,{received:0,position:origin,velocity:new Vector3(1.5,0,0)},true)
+h.update(20,.02,{received:20,position:new Vector3(.03,1.05,-.65),velocity:new Vector3(1.5,0,0)},true)
+const last = h.position.clone()
+for(let now=40;now<=140;now+=10) h.update(now,.01,null,true)
+assert.equal(h.source,'PREDICTED');assert.equal(h.predictionAgeMs,120)
+assert(h.position.x>last.x)
+assert(h.position.distanceTo(last)<=T.CV_PREDICTION_MAX_DISPLACEMENT)
+assert(h.velocity.length()<=T.CV_PREDICTION_MAX_VELOCITY)
+assert.equal(assistLevel('LOST',h,true),'SWING-LOSS')
+const predicted = h.position.clone(), predictedVelocity = h.velocity.clone()
+for(let now=150;now<=260;now+=10) h.update(now,.01,null,true)
+assert.equal(h.source,'HELD');assert.equal(h.velocity.length(),0)
+const held = h.position.clone()
+h.update(1000,.02,null,true);assert(h.position.equals(held),'expired prediction must stop drifting')
+assert.equal(assistLevel('LOST',h,true),'NORMAL')
+const recovered = held.clone().add(new Vector3(.25,.05,0))
+h.update(1020,.02,{received:1020,position:recovered,velocity:new Vector3()},true)
+assert(h.correctingThisFrame && h.reacquiring)
+assert(h.position.equals(held),'first reacquisition sample must not snap')
+for(let now=1040;now<=1160;now+=20) {
+  const before=h.position.clone()
+  h.update(now,.02,{received:now,position:recovered,velocity:new Vector3()},true)
+  assert(h.position.distanceTo(before)<=T.CV_REACQUIRE_MAX_SPEED*.02+1e-8)
+  assert.equal(h.velocity.length(),0,'correction must not become collision velocity')
+}
+assert(h.position.distanceTo(recovered)<.016)
+const idle = new HandleContinuity();idle.reset(origin)
+idle.update(0,.02,{received:0,position:origin,velocity:new Vector3(2,0,0)},false)
+idle.update(120,.02,null,false)
+assert.equal(idle.source,'HELD');assert(idle.position.equals(origin))
+assert.equal(idle.velocity.length(),0)
+
+const pose = x => ({position:new Vector3(x,1.05,-.65),rotation:new Quaternion()})
+const ctx = (extra={}) => ({now:140,swingActive:true,source:'PREDICTED',level:'SWING-LOSS',predictionAgeMs:120,reacquiring:false,...extra})
+function liveBall(x,z=-.9) {
+  const g = new Delivery(()=>.5);g.state='AFTER_BOUNCE';g.released=true;g.bounced=true
+  g.position.set(x,.6,z);g.velocity.set(0,0,16);return g
+}
+function attempt({x=.28, z=-.9, context=ctx(), beginner=true, omega=3, batX=0, velocity=new Vector3()}={}) {
+  const g=liveBall(x,z);g.deliveryBeginner=beginner
+  g.step(.04,pose(batX),pose(batX),true,{handleVelocity:velocity,angularVelocity:new Vector3(0,0,omega)},context)
+  return g
+}
+const assisted=attempt({x:predicted.x+.28,batX:predicted.x,velocity:predictedVelocity})
+assert.equal(assisted.outcome,'HIT','120ms CV loss and close phone swing should connect')
+assert.equal(assisted.assistedHit,true);assert.equal(assisted.quality,'GOOD')
+assert(Math.abs(assisted.position.x-(predicted.x+.28))<.12,'no snap of ball onto bat')
+assert.equal(attempt({context:ctx({source:'MEASURED',level:'NORMAL'})}).outcome,'HIT','beginner corridor also compensates imperfect measured position')
+assert.equal(attempt({context:ctx({swingActive:false,source:'HELD'}),x:0}).outcome,null,'no magic hit when wrist lost and phone idle')
+assert.equal(attempt({context:ctx({swingActive:false,source:'MEASURED'}),x:.21}).outcome,null,'stationary phone cannot request near assist')
+assert.equal(attempt({context:ctx({swingActive:false,source:'MEASURED'}),x:0}).outcome,null,'beginner PHONE mode requires a real swing, not autoplay')
+assert.equal(attempt({x:.8}).outcome,null,'far swing misses')
+assert.equal(attempt({x:1.4,batX:1.4}).outcome,null,'outside batting zone misses')
+assert.equal(attempt({z:-4}).outcome,null,'early swing misses')
+assert.equal(attempt({z:.6}).outcome,'MISSED','late swing misses')
+assert.equal(attempt({beginner:false}).outcome,null,'OFF disables strong assist')
+assert.equal(contactAssistMultiplier(ctx({predictionAgeMs:300})),1,'loss boost expires')
+assert.equal(attempt({x:0,context:ctx({source:'MEASURED',level:'NORMAL'})}).quality,'SWEET')
+assert.equal(attempt({x:0,context:ctx({level:'DEGRADED'})}).quality,'GOOD')
+assert(attempt({x:0,omega:3}).velocity.x>0)
+assert(attempt({x:0,omega:-3}).velocity.x<0)
+const correction=liveBall(0)
+correction.step(.04,pose(-.7),pose(.7),true,{handleVelocity:new Vector3(),angularVelocity:new Vector3(0,0,3)},ctx({reacquiring:true}))
+assert.equal(correction.outcome,null,'reacquisition must not generate swept false hit')
+function grace(age, active=true, beginner=true) {
+  const g=liveBall(.21,-2);g.deliveryBeginner=beginner
+  const motion={handleVelocity:new Vector3(),angularVelocity:new Vector3(0,0,3)}
+  g.step(.016,pose(0),pose(0),true,motion,ctx({now:0,source:'MEASURED',level:'NORMAL'}))
+  g.position.set(.21,.6,-.9)
+  g.step(.04,pose(1),pose(1),true,motion,ctx({now:age,swingActive:active,source:'MEASURED',level:'NORMAL'}))
+  return g
+}
+assert.equal(grace(60).outcome,'HIT','60ms recent sweep provides timing grace')
+assert.equal(grace(110).outcome,'HIT','beginner timing grace includes 110ms')
+assert.equal(grace(130).outcome,null,'old sweep must expire after 120ms')
+assert.equal(grace(60,false).outcome,null,'idle phone cannot use temporal grace')
+assert.equal(grace(60,true,false).outcome,null,'OFF disables temporal grace')
+const bounded=new HandleContinuity();bounded.reset(origin)
+bounded.update(0,.02,{received:0,position:origin,velocity:new Vector3(999,999,999)},true)
+for(let now=20;now<=220;now+=10) bounded.update(now,.01,null,true)
+assert(bounded.position.distanceTo(origin)<=T.CV_PREDICTION_MAX_DISPLACEMENT+1e-8)
+assert(bounded.velocity.length()<=T.CV_PREDICTION_MAX_VELOCITY+1e-8)
+assert.equal(assistLevel('DEGRADED',bounded,true),'DEGRADED')
+console.log('PASS: swing/hysteresis, bounded continuity/reacquisition, beginner 120ms history, uncertainty quality, invalid misses and assist OFF')

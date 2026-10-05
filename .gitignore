@@ -1,0 +1,58 @@
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Vite
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# Local environment (publish examples only)
+.env
+.env.*
+!.env.example
+
+# Certificates and private keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+certs/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editors / operating systems
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary / cache
+tmp/
+temp/
+.cache/
+*.tmp
+
+# Local tuning-session reports (keep required regression baselines/tests)
+web/tests/delivery-tuning-report.md
+web/tests/spin-bounce-report.md
+web/tests/ai-line-variety-report.md

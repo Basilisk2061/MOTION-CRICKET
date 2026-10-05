@@ -1,0 +1,31 @@
+export type SwingIntent = 'IN' | 'NONE' | 'OUT'
+export function normalizeSwingIntent(value: unknown): SwingIntent {
+  return value==='IN'||value==='OUT'?value:'NONE'
+}
+// Right-handed batter: off side is world -X. IN moves from off toward the
+// batter/stumps (+X); OUT moves toward the off-side channel (-X).
+export const RIGHT_HAND_BOWLING = { OFF_SIDE: -1, LEG_SIDE: 1, FULLER_PITCH: -1, SHORTER_PITCH: 1 } as const
+export function swingWorldSign(intent: SwingIntent) {
+  return intent==='OUT'?RIGHT_HAND_BOWLING.OFF_SIDE:intent==='IN'?RIGHT_HAND_BOWLING.LEG_SIDE:0
+}
+export const LAB_TUNING = {
+  RELEASE_WINDOW_MS:100, RELEASE_CACHE_MS:120, RELEASE_SAMPLE_COUNT:16, RELEASE_COOLDOWN_MS:300,
+  MOTION_TRIM_SHARE:.20, MOTION_MAX_RAD_S:40, MOTION_DEADZONE:.25, PACE_RESPONSE_RAD_S:5,
+  PACE_MIN:11, PACE_MAX:23,
+  // Screen-facing user control only; cricket IN/OUT semantics remain separate.
+  LATERAL_CONTROL_SIGN:-1,
+  LINE_DEADZONE:.14, LINE_MAX_ANGLE:.7, LINE_MAX_OFFSET:1,
+  LENGTH_DEADZONE:.20, LENGTH_MAX_ANGLE:.7, NEUTRAL_PITCH_TARGET:-6,
+  MIN_PITCH_TARGET:-10, MAX_PITCH_TARGET:-1.2, ANGLE_RESPONSE:1.8,
+  DEFAULT_TARGET_X:-.12, DEFAULT_TARGET_Z:-6,
+  MAX_RELEASE_LINE_ERROR:.30, MAX_RELEASE_LENGTH_ERROR:.80,
+  LANDING_RADIUS_X:.50, LANDING_RADIUS_Z:.75,
+  BASE_SELECTED_SWING:1.6, MOTION_SWING_CONTRIBUTION:2.4, MAX_USER_SWING:4,
+  MAX_PREBOUNCE_SWING_DISPLACEMENT:1.25,
+  TRAIL_SECONDS:.22, TRAIL_POINTS:16, BALL_ROTATION_RAD_S:9,
+  SWING_VISIBLE_DISPLACEMENT:.025, SWING_NORMAL_DISPLACEMENT:.25, SWING_STRONG_DISPLACEMENT:.85,
+  // A simulation-unit conversion, not a measurement of the player's real arm speed.
+  SIM_KMH_PER_UNIT_S:3.6,
+  LINE_MIDDLE_LIMIT:.05, LINE_STUMP_LIMIT:.18,
+  YORKER_LENGTH_LIMIT:-2.2, FULL_LENGTH_LIMIT:-4.8, GOOD_LENGTH_LIMIT:-7.2, SHORT_LENGTH_LIMIT:-9,
+} as const
