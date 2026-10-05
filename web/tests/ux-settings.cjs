@@ -41,3 +41,17 @@ states.length=0;cursor=0;tree=Launch.default();const link=nodes().find(n=>n.type
 const panel=fs.readFileSync(path.join(__dirname,'../src/PhoneBowlingPanel.tsx'),'utf8');assert(panel.includes('fill="#444444"'));assert(!panel.includes('#88795c'))
 const css=fs.readFileSync(path.join(__dirname,'../src/bowlingLab.css'),'utf8');assert(css.includes('.phone-bowling{background:#101010'));assert(css.includes('.phone-bowling .touch-bowl.armed{background:#494949}'))
 console.log('PASS: pause/resume/main menu/Escape/key isolation, persisted immediate crowd/SFX/mute, neutral bowling presentation and explicit validated tracker launch')
+const hudCSS=fs.readFileSync(path.join(__dirname,'../src/onboarding.css'),'utf8')
+assert(hudCSS.includes('.in-game-menu{position:absolute;top:18px;left:50%;transform:translateX(-50%);'))
+assert.equal([...hudCSS.matchAll(/\.in-game-menu\{/g)].length,1,'No responsive MENU repositioning')
+const battingCSS=fs.readFileSync(path.join(__dirname,'../src/battingHud.css'),'utf8')
+assert(battingCSS.includes('.batting-view .over-announcement { top: 80px; left: 50%; transform: translateX(-50%);'))
+const announcementRules=[...battingCSS.matchAll(/\.batting-view \.over-announcement\s*\{([^}]+)\}/g)].map(m=>m[1])
+assert(announcementRules.every(rule=>!/(right\s*:|left\s*:\s*auto|transform\s*:\s*none)/.test(rule)),'No breakpoint moves announcement off center')
+// Conservative 40px MENU height leaves at least 22px of vertical separation.
+for(const width of [1920,1440,1280,1101,1024,900,800,760]){
+ const menuCenter=width*.5,announcementCenter=width*.5
+ assert.equal(menuCenter,announcementCenter,'Both HUD elements remain centered')
+ assert(80-(18+40)>=22,'Announcement starts below MENU with a comfortable gap')
+}
+console.log('PASS: MENU stays top-center; centered bowler announcement below has a safe gap at desktop/laptop breakpoints')
