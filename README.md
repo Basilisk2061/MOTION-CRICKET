@@ -33,11 +33,20 @@ The Python bridge publishes controller JSON on `ws://127.0.0.1:8765`. Vite proxi
 
 The phone is not an absolute-position tracker: accelerometer data is **not** integrated to obtain handle position. Webcam wrist tracking does not provide the phone-controlled bat orientation.
 
-[![Motion control architecture: webcam position and phone orientation feed the browser game](docs/assets/architecture-image.png)](docs/assets/architecture-video.mp4)
+<p align="center">
+  <img src="docs/assets/architecture-demo.gif" alt="Motion-Cricket motion control architecture" width="100%">
+</p>
+
+<details>
+<summary><b>View high-resolution architecture diagram</b></summary>
+
+![Motion control architecture: webcam position and phone orientation feed the browser game](docs/assets/architecture-image.png)
+
+</details>
 
 **[Watch the architecture walkthrough (MP4, 19 seconds, approximately 43 MB)](docs/assets/architecture-video.mp4)**
 
-The diagram and animation are conceptual illustrations, not recordings of the live input pipeline or a deployed site. The descriptions here reflect the current runtime. The video is linked as a repository file rather than embedded using unsupported README video markup.
+The diagram and animation are conceptual illustrations, not recordings of the live input pipeline or a deployed site. The descriptions here reflect the current runtime. The animation loops inline; the MP4 remains available as the higher-quality source.
 
 ## Computer Vision Tracking
 

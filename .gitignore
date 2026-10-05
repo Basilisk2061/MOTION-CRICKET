@@ -47,6 +47,7 @@ Thumbs.db
 desktop.ini
 
 # Temporary / cache
+.tools/
 tmp/
 temp/
 .cache/
