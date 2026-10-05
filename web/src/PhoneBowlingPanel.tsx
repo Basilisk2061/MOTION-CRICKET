@@ -38,14 +38,14 @@ export default function PhoneBowlingPanel({controller,connected,fresh,enabled,re
     refreshTarget(n=>n+1)
    }}>
    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-    <rect x="0" y="0" width="100" height="100" fill="#88795c"/>
+    <rect x="0" y="0" width="100" height="100" fill="#444444"/>
     {[['VERY SHORT',T.MIN_PITCH_TARGET,T.SHORT_LENGTH_LIMIT],['SHORT',T.SHORT_LENGTH_LIMIT,T.GOOD_LENGTH_LIMIT],['GOOD',T.GOOD_LENGTH_LIMIT,T.FULL_LENGTH_LIMIT],['FULL',T.FULL_LENGTH_LIMIT,T.YORKER_LENGTH_LIMIT],['YORKER',T.YORKER_LENGTH_LIMIT,T.MAX_PITCH_TARGET]].map(([label,start,end],i)=>{
      const y=pitchTargetUV({x:0,z:Number(end)}).v*100,h=(Number(end)-Number(start))/(T.MAX_PITCH_TARGET-T.MIN_PITCH_TARGET)*100
-     return <g key={String(label)}><rect x="0" y={y} width="100" height={h} fill={i%2?'#d2c29d':'#b1a687'} opacity=".22"/>
-      <text x="50" y={y+h/2+2} textAnchor="middle" fill="#f0e7d1" fontSize="5">{label}</text></g>
+     return <g key={String(label)}><rect x="0" y={y} width="100" height={h} fill={i%2?'#dddddd':'#999999'} opacity=".22"/>
+      <text x="50" y={y+h/2+2} textAnchor="middle" fill="#eeeeee" fontSize="5">{label}</text></g>
     })}
-    <line x1="50" x2="50" y1="0" y2="100" stroke="#e7dcc0" strokeDasharray="2 3" opacity=".5"/>
-    <ellipse cx={uv.u*100} cy={uv.v*100} rx="8" ry="7" fill="#f4e6b8" stroke="#fff3cf" opacity=".8"/>
+    <line x1="50" x2="50" y1="0" y2="100" stroke="#dddddd" strokeDasharray="2 3" opacity=".5"/>
+    <ellipse cx={uv.u*100} cy={uv.v*100} rx="8" ry="7" fill="#ffffff" stroke="#eeeeee" opacity=".8"/>
    </svg>
   </button>
   <div className="lab-target-caption"><span>LEG</span><span>BOWLER</span><span>OFF</span></div>

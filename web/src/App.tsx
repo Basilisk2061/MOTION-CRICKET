@@ -77,6 +77,7 @@ import { requestBowl } from './requestBowl'
 import { GameModes, type GameMode } from './gameMode'
 import ModeOverlay from './ModeOverlay'
 import MainMenu from './MainMenu'
+import GameMenu from './GameMenu'
 import BowlingLab from './BowlingLab'
 import BattingHud from './BattingHud'
 import { HELP_KEYS, hasSeen, battingFeedback } from './battingHelp'
@@ -1617,6 +1618,7 @@ export default function App() {
   }
   return (
     <main className="batting-view">
+      {!onboarding && <GameMenu onSuspend={value=>{feed.bowlRequests.current=0;feed.publishBowlReady(false,performance.now());setHelpPaused(value)}} onMainMenu={()=>{setHelpPaused(false);changeMode()}}/>}
       {onboarding?<div className="batting-preplay" aria-hidden="true"><span>Motion Cricket</span><div className="preplay-crease"/></div>:<Canvas
         frameloop={helpPaused?'never':'always'}
         shadows

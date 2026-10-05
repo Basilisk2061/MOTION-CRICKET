@@ -4,12 +4,15 @@ import json
 import os
 from pathlib import Path
 import re
+import queue
 import sys
 import threading
 import traceback
 import tkinter as tk
 from tkinter import ttk
 import webbrowser
+from tkinter import messagebox
+from tracker_protocol import parse_join_uri, register, unregister, registered, TrackerInstance
 
 PUBLIC_GAME = "https://motion-cricket.motion-cricket.workers.dev"
 PUBLIC_RELAY = "wss://motion-cricket.motion-cricket.workers.dev/relay"
@@ -38,6 +41,8 @@ class Launcher:
         self.calibrate = threading.Event()
         self.latest_status = "Not connected"
         self.closing = False
+        self.pending_session = None
+        self.instance = None
         root.title("Motion Cricket Tracker")
         root.resizable(False, False)
         root.configure(bg='#0d0d0d')
@@ -98,6 +103,14 @@ class Launcher:
                                           disabledforeground='#777', relief='flat', bd=0, font=('Segoe UI', 10, 'bold'), pady=9)
         self.calibrate_button.grid(sticky="ew")
         label('Keep your right arm visible.\nC = calibrate in webcam window    ESC = stop', justify='left').grid(sticky="w", pady=(12, 10))
+        self.protocol_button = tk.Button(body, text='ENABLE ONE-CLICK LAUNCH', command=self.toggle_protocol,
+                                        bg='#222', fg='#eee', relief='flat', pady=8)
+        self.protocol_button.grid(sticky='ew')
+        if not getattr(sys, 'frozen', False):
+            self.protocol_button.configure(state='disabled', text='ONE-CLICK LAUNCH: PORTABLE EXE ONLY')
+        elif registered(sys.executable):
+            self.protocol_button.configure(text='DISABLE ONE-CLICK LAUNCH')
+        label('Allows the website to open this tracker and fill your game code.', wraplength=380, justify='left').grid(sticky='w', pady=(6, 10))
         links = tk.Frame(body, bg='#0d0d0d')
         links.grid(sticky='ew')
         for text, command in [('OPEN MOTION CRICKET ↗', lambda: webbrowser.open(PUBLIC_GAME)), ('HOW TO CONNECT', self.show_help)]:
@@ -106,6 +119,31 @@ class Launcher:
         root.bind('<Escape>', lambda event: self.stop.set())
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(100, self.poll)
+
+    def toggle_protocol(self):
+        try:
+            if registered(sys.executable):
+                unregister(sys.executable)
+                self.protocol_button.configure(text='ENABLE ONE-CLICK LAUNCH')
+            else:
+                register(sys.executable)
+                self.protocol_button.configure(text='DISABLE ONE-CLICK LAUNCH')
+            self.latest_status = 'One-click launch updated for this Windows user. If you move the folder, enable it again.'
+        except (OSError, ValueError) as error:
+            self.latest_status = f'One-click launch: {error}'
+
+    def receive_uri(self, uri):
+        session = parse_join_uri(uri) if uri else None
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        if session:
+            if self.worker and self.worker.is_alive():
+                self.pending_session = session
+                self.latest_status = 'New game code received. DISCONNECT first, then press CONNECT.'
+            else:
+                self.session.set(session)
+                self.latest_status = 'Game code filled. Choose camera and press CONNECT.'
 
     def show_help(self):
         window = tk.Toplevel(self.root)
@@ -159,6 +197,15 @@ class Launcher:
 
     def poll(self):
         running = self.worker is not None and self.worker.is_alive()
+        if self.instance:
+            try:
+                self.receive_uri(self.instance.messages.get_nowait())
+            except queue.Empty:
+                pass
+        if not running and self.pending_session:
+            self.session.set(self.pending_session)
+            self.pending_session = None
+            self.latest_status = 'New game code filled. Press CONNECT when ready.'
         self.status.set(self.latest_status if 'Camera ready' not in self.latest_status else 'Webcam preview running. Keep this window open.')
         for name, value in display_status(self.latest_status, running).items():
             self.status_rows[name].set(value)
@@ -212,16 +259,50 @@ def self_test(report):
     Path(report).write_text(json.dumps(result, indent=2), encoding="utf-8")
 
 
-def launch():
+def parse_arguments(argv):
+    # A URI invocation is one inert argument, never a route into maintenance flags.
+    if any(value.lower().startswith('motioncricket:') for value in argv):
+        if len(argv) != 1:
+            raise ValueError('A tracker link must be a single argument.')
+        parse_join_uri(argv[0])
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test-report", help=argparse.SUPPRESS)
-    args = parser.parse_args()
+    parser.add_argument('uri', nargs='?', help='motioncricket://join?session=CODE')
+    args = parser.parse_args(argv)
+    if args.uri:
+        parse_join_uri(args.uri)
+        if args.self_test_report:
+            raise ValueError('Tracker links cannot invoke maintenance actions.')
+    return args
+
+
+def launch():
+    try:
+        args = parse_arguments(sys.argv[1:])
+    except ValueError as error:
+        root = tk.Tk(); root.withdraw()
+        messagebox.showerror('Motion Cricket Tracker', str(error)); root.destroy()
+        return
     if args.self_test_report:
         self_test(args.self_test_report)
         return
-    root = tk.Tk()
-    Launcher(root)
-    root.mainloop()
+    instance = TrackerInstance() if os.name == 'nt' else None
+    try:
+        if instance and not instance.primary:
+            if not instance.forward(args.uri):
+                root = tk.Tk(); root.withdraw()
+                messagebox.showerror('Motion Cricket Tracker', 'Tracker is already open but could not receive the link. Open its window and enter the code manually.')
+                root.destroy()
+            return
+        root = tk.Tk()
+        app = Launcher(root)
+        app.instance = instance
+        if args.uri:
+            app.receive_uri(args.uri)
+        root.mainloop()
+    finally:
+        if instance:
+            instance.close()
 
 
 if __name__ == "__main__":

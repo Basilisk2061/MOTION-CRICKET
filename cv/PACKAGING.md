@@ -43,3 +43,8 @@ download is unpublished and links to releases rather than offering a broken ZIP.
 
 Do not add the ZIP to Git or Vite assets. Keep the existing full runtime together;
 the large binary belongs in release assets, not the Cloudflare web deployment.
+# Next tracker version: one-click launch (not released)
+
+The current v0.1.0 ZIP is unchanged. These source changes require a new verified build/release (v0.1.1); do not overwrite v0.1.0.
+In the portable EXE, **ENABLE ONE-CLICK LAUNCH** explicitly registers only `HKCU\Software\Classes\motioncricket` for the current EXE location, without admin rights or PATH changes. Extraction alone does not register anything. The same button disables this handler; it will not remove a handler owned by another EXE. After moving the extracted folder, enable it again at its new location.
+The website's **OPEN TRACKER** uses `motioncricket://join?session=CODE`. Windows/browser confirmation is expected. Only the existing six-character session alphabet is accepted; no URI is executed as a command. The code is filled but **CONNECT remains manual**. An already-running instance receives the code through a per-user Windows named pipe and is raised. If tracking is active, the new code waits until the player disconnects; the current session is never switched automatically. If forwarding fails, an error gives the manual fallback rather than opening another tracker window.

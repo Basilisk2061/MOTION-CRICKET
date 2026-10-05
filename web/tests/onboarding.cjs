@@ -11,7 +11,7 @@ const code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/Guided
 const state=[],effects=[];let cursor=0,completed=0,closed=0
 const react={useState(initial){const i=cursor++;if(!(i in state))state[i]=initial;return[state[i],v=>state[i]=typeof v==='function'?v(state[i]):v]},useRef:()=>({current:null}),useEffect:f=>effects.push(f)}
 const m={exports:{}}
-new Function('require','module','exports',code)(id=>id==='react'?react:id==='./PhoneSetup'||id==='./TrackerDownload'?{default:()=>null}:id.endsWith('.css')?{}:id.startsWith('./')?load(id.slice(2)):require(id),m,m.exports)
+new Function('require','module','exports',code)(id=>id==='react'?react:id==='./PhoneSetup'||id==='./TrackerDownload'||id==='./TrackerLaunch'?{default:()=>null}:id.endsWith('.css')?{}:id.startsWith('./')?load(id.slice(2)):require(id),m,m.exports)
 const props={status,firstVisit:true,onComplete:()=>completed++,onClose:()=>closed++}
 let tree
 const render=()=>{cursor=0;effects.length=0;tree=m.exports.default(props)}

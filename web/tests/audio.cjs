@@ -3,7 +3,7 @@ const fs = require('node:fs'), ts = require('typescript')
 const code = ts.transpileModule(fs.readFileSync(require('node:path').join(__dirname,'../src/gameAudio.ts'),'utf8'),
   {compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText
 const mod = {exports:{}}
-new Function('exports','module',code)(mod.exports,mod)
+new Function('exports','module','require',code)(mod.exports,mod,require('./tactical-loader.cjs'))
 const {GameAudio} = mod.exports
 const sound = new GameAudio()
 sound.impact('SWEET',20) // Safe before a user gesture / without browser audio.

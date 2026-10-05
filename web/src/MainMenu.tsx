@@ -4,6 +4,7 @@ import type { GameMode } from './gameMode'
 import { MENU_CHOICES, menuBack, type MenuPage } from './menuNavigation'
 import './gameMenu.css'
 import GuidedSetup from './GuidedSetup'
+import AudioSettings from './AudioSettingsPanel'
 import { HELP_KEYS, hasSeen } from './battingHelp'
 import type { SetupStatus } from './onboarding'
 
@@ -44,6 +45,7 @@ export default function MainMenu({page,onNavigate,onChoose,onLab,phoneConnected,
   const count=choices.length+(page==='MAIN'?2:1)
   const key=(e:KeyboardEvent)=>{
    if(guide!==null)return
+   if((e.target as HTMLElement)?.matches('input,select,textarea'))return
    if(e.key==='Escape' && page!=='MAIN'){e.preventDefault();onNavigate(menuBack(page))}
    if(e.key==='ArrowUp'||e.key==='ArrowDown'){
     e.preventDefault();const next=(selected+(e.key==='ArrowDown'?1:-1)+count)%count
@@ -61,7 +63,7 @@ export default function MainMenu({page,onNavigate,onChoose,onLab,phoneConnected,
    <div key={page} className="game-menu-page">
     {page!=='MAIN' && <h2>{page}</h2>}
     {page==='TRAINING'||page==='RECORDS'?<p className="menu-coming">Coming soon.<br/><small>More ways to play are on the way.</small></p>:null}
-    {page==='SETTINGS' && <p className="menu-coming">Controller setup is on your phone.<br/><small>Motion permissions and calibration remain in the controller.</small></p>}
+    {page==='SETTINGS' && <AudioSettings/>}
     <nav aria-label="Game navigation">
      {choices.map((choice,index)=><button key={choice.label} ref={element=>{buttons.current[index]=element}}
       className={`game-menu-option ${selected===index?'selected':''}`} onMouseEnter={()=>setSelected(index)}
