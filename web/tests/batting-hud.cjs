@@ -3,21 +3,22 @@ global.localStorage={values:new Map(),getItem(k){return this.values.get(k)??null
 const help=load('battingHelp'),{GameModes}=load('gameMode'),{SessionScore}=load('sessionScore')
 function component(name,react,fiber={}){
  const m={exports:{}},code=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src',name+'.tsx'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText
- new Function('require','module','exports',code)(id=>id==='react'?react:id==='@react-three/fiber'?fiber:id==='./PhoneSetup'?{default:()=>null}:id.endsWith('.css')?{}:id.startsWith('./')?load(id.slice(2)):require(id),m,m.exports);return m.exports.default
+ new Function('require','module','exports',code)(id=>id==='react'?react:id==='@react-three/fiber'?fiber:id==='./PhoneSetup'?{default:()=>null}:id==='./GuidedSetup'?{default:props=>({type:'div',props:{role:'dialog',children:[{type:'button',props:{children:'Close help',onClick:props.onClose}},{type:'button',props:{children:'Start batting',onClick:props.onComplete}}]}})}:id.endsWith('.css')?{}:id.startsWith('./')?load(id.slice(2)):require(id),m,m.exports);return m.exports.default
 }
-function fixture(mode){
+function fixture(mode,first=false){
  const states=[];let cursor=0,tree;const calls=[]
  const react={useState(initial){const i=cursor++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],v=>states[i]=typeof v==='function'?v(states[i]):v]},useRef:()=>({current:null}),useEffect:()=>{}}
  const Hud=component('BattingHud',react),modes=new GameModes(new SessionScore(),()=>.5);modes.choose(mode)
- const props={modes,game:{state:'READY'},beginner:true,onAssist:v=>{calls.push(v);props.beginner=v},phoneStatus:'CONNECTED',calibrated:true,onDebug:()=>{},debug:false,initialOnboarding:!help.hasSeen(help.HELP_KEYS.tutorial),onStart:()=>{props.initialOnboarding=false;calls.push('START')},onSuspend:v=>calls.push(v?'PAUSE':'RESUME')}
+ const props={modes,game:{state:'READY'},beginner:true,onAssist:v=>{calls.push(v);props.beginner=v},phoneStatus:'CONNECTED',calibrated:true,onDebug:()=>{},debug:false,initialOnboarding:first,onStart:()=>{props.initialOnboarding=false;calls.push('START')},onSuspend:v=>calls.push(v?'PAUSE':'RESUME')}
  function render(){cursor=0;tree=Hud(props)}
- function nodes(n=tree,out=[]){if(n&&typeof n==='object'){out.push(n);for(const c of [n.props?.children].flat(Infinity))if(c!=null)nodes(c,out)}return out}
- function text(n){return typeof n==='string'||typeof n==='number'?String(n):n&&typeof n==='object'?[n.props?.children].flat(Infinity).map(text).join(' '):''}
+ function nodes(n=tree,out=[]){if(n&&typeof n==='object'){if(typeof n.type==='function')return nodes(n.type(n.props),out);out.push(n);for(const c of [n.props?.children].flat(Infinity))if(c!=null)nodes(c,out)}return out}
+ function text(n){if(n&&typeof n.type==='function')return text(n.type(n.props));return typeof n==='string'||typeof n==='number'?String(n):n&&typeof n==='object'?[n.props?.children].flat(Infinity).map(text).join(' '):''}
  render();return {props,calls,render,text:()=>text(tree),buttons:()=>nodes().filter(n=>n.type==='button'),dialog:()=>nodes().some(n=>n.props?.role==='dialog'),click(label){const b=nodes().find(n=>n.type==='button'&&text(n).trim()===label)??nodes().find(n=>n.type==='button'&&text(n).trim().startsWith(label));assert(b,label);if(!b.props.disabled)b.props.onClick();render()}}
 }
-const free=fixture('FREE_PLAY'),chase=fixture('TARGET_CHASE')
-assert(free.dialog());assert(chase.dialog(),'either first batting mode shows onboarding');assert(!free.text().includes('balls left'));assert(!free.calls.includes('START'))
-free.click('Next');assert(free.text().includes('Connect your phone'));free.click('Back');assert(free.text().includes('Set up your space'));free.click('Next');free.click('Next');assert(free.text().includes('Calibrate your grip'));free.click('Next');assert(free.text().includes('Beginner Assist starts on'));free.click('Start batting');assert(!free.dialog());assert(free.calls.includes('START'))
+const first=fixture('FREE_PLAY',true),chase=fixture('TARGET_CHASE',true)
+assert(first.dialog());assert(chase.dialog(),'either first batting mode mounts the shared guide');assert(!first.text().includes('balls left'));assert(!first.calls.includes('START'))
+first.click('Start batting');assert(!first.dialog());assert(first.calls.includes('START'))
+const free=fixture('FREE_PLAY')
 assert(!fixture('FREE_PLAY').dialog(),'return does not repeat tutorial');free.click('How to play');assert(free.dialog());assert(free.calls.includes('PAUSE'));free.click('Close help');assert(!free.dialog())
 free.props.game.state='FLIGHT';free.render();free.click('How to play');assert(!free.dialog(),'help cannot open in flight');free.props.game.state='READY';free.render()
 free.click('Beginner Assist');assert(free.dialog());assert(!free.calls.includes(false),'explanation precedes disable');free.click('Keep on');assert(free.props.beginner)

@@ -28,3 +28,18 @@ For a non-webcam packaged-runtime check, launch the EXE directly with
 `--self-test-report <writable-report-path>`. It opens/closes the launcher, checks
 session validation and initializes MediaPipe on a blank image. Physical tracking
 and camera behavior must still be tested by a player.
+
+## Portable distribution
+
+Distribute `MotionCricketTracker-Windows.zip`, containing the **entire**
+`MotionCricketTracker` folder. Download, extract the ZIP completely, then open
+`MotionCricketTracker.exe` inside that folder. This is not an installer.
+
+Publish the reviewed ZIP as a GitHub Release asset named exactly
+`MotionCricketTracker-Windows.zip` in `Basilisk2061/MOTION-CRICKET`.
+The web setup discovers that asset from the five most recent public,
+non-prerelease releases. Until it exists, the UI explicitly reports that the
+download is unpublished and links to releases rather than offering a broken ZIP.
+
+Do not add the ZIP to Git or Vite assets. Keep the existing full runtime together;
+the large binary belongs in release assets, not the Cloudflare web deployment.

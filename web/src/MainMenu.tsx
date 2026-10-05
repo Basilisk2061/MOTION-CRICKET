@@ -3,6 +3,9 @@ import { Canvas } from '@react-three/fiber'
 import type { GameMode } from './gameMode'
 import { MENU_CHOICES, menuBack, type MenuPage } from './menuNavigation'
 import './gameMenu.css'
+import GuidedSetup from './GuidedSetup'
+import { HELP_KEYS, hasSeen } from './battingHelp'
+import type { SetupStatus } from './onboarding'
 
 function Pavilion(){
  return <>
@@ -22,21 +25,25 @@ function Pavilion(){
   </group>
  </>
 }
-export default function MainMenu({page,onNavigate,onChoose,onLab,phoneConnected}:{page:MenuPage;onNavigate:(page:MenuPage)=>void;
- onChoose:(mode:GameMode)=>void;onLab:()=>void;phoneConnected:boolean}){
+export default function MainMenu({page,onNavigate,onChoose,onLab,phoneConnected,setupStatus,onSetupDone}:{page:MenuPage;onNavigate:(page:MenuPage)=>void;
+ onChoose:(mode:GameMode)=>void;onLab:()=>void;phoneConnected:boolean;setupStatus:SetupStatus;onSetupDone:()=>void}){
+ const [guide,setGuide]=useState<number|null>(()=>hasSeen(HELP_KEYS.tutorial)?null:0)
+ const [firstVisit,setFirstVisit]=useState(()=>!hasSeen(HELP_KEYS.tutorial))
+ const closeGuide=()=>{setGuide(null);setFirstVisit(false);onSetupDone()}
  const [selected,setSelected]=useState(0),buttons=useRef<(HTMLButtonElement|null)[]>([])
  const choices=MENU_CHOICES[page]
  const activate=(index:number)=>{
   const choice=choices[index]
-  if(!choice){if(page!=='MAIN')onNavigate(menuBack(page));return}
+  if(!choice){if(page!=='MAIN')onNavigate(menuBack(page));else setGuide(index===choices.length?0:2);return}
   if(choice.page)onNavigate(choice.page)
   else if(choice.mode)onChoose(choice.mode)
   else if(choice.lab)onLab()
  }
  useEffect(()=>setSelected(0),[page])
  useEffect(()=>{
-  const count=choices.length+(page==='MAIN'?0:1)
+  const count=choices.length+(page==='MAIN'?2:1)
   const key=(e:KeyboardEvent)=>{
+   if(guide!==null)return
    if(e.key==='Escape' && page!=='MAIN'){e.preventDefault();onNavigate(menuBack(page))}
    if(e.key==='ArrowUp'||e.key==='ArrowDown'){
     e.preventDefault();const next=(selected+(e.key==='ArrowDown'?1:-1)+count)%count
@@ -46,7 +53,7 @@ export default function MainMenu({page,onNavigate,onChoose,onLab,phoneConnected}
    if(e.key==='Enter' && !(e.target instanceof HTMLButtonElement)){e.preventDefault();activate(selected)}
   }
   window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key)
- },[page,selected,onNavigate,choices])
+ },[page,selected,onNavigate,choices,guide])
  return <main className="game-menu-screen">
   <Canvas shadows dpr={[1,1.5]} camera={{position:[1,1.6,6],fov:48}}><Pavilion/></Canvas>
   <section className="game-menu-content" aria-label={`${page} menu`}>
@@ -62,6 +69,11 @@ export default function MainMenu({page,onNavigate,onChoose,onLab,phoneConnected}
       <span className="menu-cursor" aria-hidden="true">›</span>{choice.label}
       {choice.description && <small>{choice.description}</small>}
      </button>)}
+     {page==='MAIN'&&['HOW TO PLAY','TRACKER / SETUP'].map((label,index)=><button key={label}
+      ref={element=>{buttons.current[choices.length+index]=element}}
+      className={`game-menu-option menu-help ${selected===choices.length+index?'selected':''}`}
+      onMouseEnter={()=>setSelected(choices.length+index)} onFocus={()=>setSelected(choices.length+index)}
+      onClick={()=>setGuide(index===0?0:2)}><span className="menu-cursor" aria-hidden="true">›</span>{label}</button>)}
      {page!=='MAIN' && <button className={`game-menu-option menu-back ${selected===choices.length?'selected':''}`}
       ref={element=>{buttons.current[choices.length]=element}} onMouseEnter={()=>setSelected(choices.length)}
       onFocus={()=>setSelected(choices.length)} onClick={()=>onNavigate(menuBack(page))}>BACK</button>}
@@ -70,5 +82,7 @@ export default function MainMenu({page,onNavigate,onChoose,onLab,phoneConnected}
   </section>
   <p className="game-menu-phone"><i className={phoneConnected?'online':''}/>PHONE — {phoneConnected?'CONNECTED':'NOT CONNECTED'}</p>
   <footer className="game-menu-footer"><span>MOTION CRICKET / EARLY ACCESS</span><span>↑ ↓ SELECT · ENTER PLAY · ESC BACK</span></footer>
+  {guide!==null&&<GuidedSetup initialStep={guide} firstVisit={firstVisit} status={setupStatus}
+    onClose={closeGuide} onComplete={()=>{closeGuide();onNavigate('BATTING')}}/>}
  </main>
 }

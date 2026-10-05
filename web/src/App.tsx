@@ -1611,7 +1611,9 @@ export default function App() {
   if(modes.status==='MENU') {
     if(bowlingLab)return <BowlingLab feed={feed} onBack={()=>{setBowlingLab(false);setMenuPage('BOWLING')}}/>
     return <MainMenu page={menuPage} onNavigate={setMenuPage} onChoose={chooseMode}
-      onLab={()=>setBowlingLab(true)} phoneConnected={feed.phoneConnected.current}/>
+      onLab={()=>setBowlingLab(true)} phoneConnected={feed.phoneConnected.current}
+      setupStatus={{webcamConnected:feed.display.connected&&!feed.display.stale,webcamCalibrated:!!feed.display.message?.calibrated,
+        phoneConnected:status==='CONNECTED',phoneCalibrated:!!imu?.calibrated}} onSetupDone={()=>setOnboarding(false)}/>
   }
   return (
     <main className="batting-view">
@@ -1663,6 +1665,7 @@ export default function App() {
       <BattingHud modes={modes} game={game} beginner={beginner}
         onAssist={value=>{setBeginner(value);game.beginner=value}}
         phoneStatus={status} calibrated={!!imu?.calibrated} debug={axes}
+        webcamConnected={feed.display.connected&&!feed.display.stale} webcamCalibrated={!!feed.display.message?.calibrated}
         initialOnboarding={onboarding} onStart={()=>{feed.bowlRequests.current=0;const next=new Delivery();next.beginner=beginner;setGame(next);setOnboarding(false)}}
         onExit={changeMode} onSuspend={value=>{feed.bowlRequests.current=0;feed.publishBowlReady(false,performance.now());setHelpPaused(value)}}
         onDebug={()=>{setAxes(value=>!value);if(axes)setOrbit(false)}} />
