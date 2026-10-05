@@ -134,9 +134,11 @@ Swept collision is retained. Contact velocity is `v_handle + omega × r`, using
 mapped accepted CV velocity and phone angular velocity in the player frame.
 
 Accepted ACTIVE **or DEGRADED** CV samples drive PHONE-mode position. Rejected,
-uncalibrated, LOST or stale samples hold. X/Y scale remains .45; depth is .25
-(no longer diagnostic 1.5). Offsets are bounded to ±.65/.55/.20 metres, with
-1.5mm render dead zone and 12–25ms interpolation, capped at 4m/s for catch-up.
+uncalibrated, LOST or stale samples hold. X/Y scale is .45 and depth is .25;
+offsets are bounded to ±.65/.55/.20 scene metres. Python applies the adaptive
+right-wrist position filter; browser continuity applies each fresh accepted
+sample directly, without extrapolating position. A separate visual-only
+deadband reduces rendered micro-jitter without altering gameplay contact position.
 Axis / position debug shows blade changes plus CV raw, target and displayed XYZ.
 
 ## Tests / limitations
@@ -150,7 +152,7 @@ Tests cover neutral/return, wrap, axes, screen-frame invariance, angular convers
 rigid-body point velocity, stale/malformed messages, swept hit/miss camera gates,
 and live relay latest-only delivery/disconnect/reconnect.
 
-Physical phone behavior is not yet verified. Sensor availability, rate, permission
+Physical playtesting remains important across devices. Sensor availability, rate, permission
 UI and background suspension vary by browser/device; use current Safari on iOS
 or Chrome on Android. Orientation is required; motion is optional. Permission
 denial or missing events is reported, not treated as valid data. Yaw may drift
