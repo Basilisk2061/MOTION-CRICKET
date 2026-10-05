@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import tempfile
+import ctypes
 import tkinter as tk
 import unittest
 from unittest.mock import Mock, patch
@@ -40,6 +41,28 @@ class Registry:
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_windows_normalized_exact_uri(self):
+        uri = 'motioncricket://join?session=TPJY8Y'
+        normalized = 'motioncricket://join/?session=TPJY8Y'
+        self.assertEqual(parse_join_uri(uri), 'TPJY8Y')
+        self.assertEqual(parse_join_uri(normalized), 'TPJY8Y')
+        self.assertEqual(parse_arguments([normalized]).uri, normalized)
+        if os.name == 'nt':
+            # Actual registered quoting leaves one URI argument, with no literal quotes.
+            shell = ctypes.WinDLL('shell32')
+            shell.CommandLineToArgvW.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
+            shell.CommandLineToArgvW.restype = ctypes.POINTER(ctypes.c_wchar_p)
+            kernel = ctypes.WinDLL('kernel32')
+            kernel.LocalFree.argtypes = [ctypes.c_void_p]
+            count = ctypes.c_int()
+            command = registration_command(r'C:\My Tracker\MotionCricketTracker.exe').replace('%1', normalized)
+            argv = shell.CommandLineToArgvW(command, ctypes.byref(count))
+            try:
+                self.assertEqual(count.value, 2)
+                self.assertEqual(argv[1], normalized)
+                self.assertEqual(parse_join_uri(parse_arguments([argv[1]]).uri), 'TPJY8Y')
+            finally: kernel.LocalFree(argv)
+
     def test_launch_arguments(self):
         self.assertIsNone(parse_arguments([]).uri)
         self.assertEqual(parse_arguments(['motioncricket://join?session=K7P4AB']).uri, 'motioncricket://join?session=K7P4AB')
@@ -52,7 +75,9 @@ class ProtocolTests(unittest.TestCase):
         for value in ('', 'motioncricket://join?session=ABC123', 'motioncricket://run?session=K7P4AB',
                       'motioncricket://join?session=K7P4AB&run=cmd', 'motioncricket://join?session=K7P4AB#x',
                       'motioncricket://join?session=%4B7P4AB', 'motioncricket://join?session=K7P4AB&session=K7P4AB',
-                      'motioncricket://join?session=k7p4ab', 'motioncricket://join/?session=K7P4AB',
+                      'motioncricket://join?session=k7p4ab', 'motioncricket://join//?session=K7P4AB',
+                      'motioncricket://join/?session=TPJY8Y"', 'motioncricket://join/run?session=TPJY8Y',
+                      'motioncricket://join/?session=TPJY8Y&run=cmd',
                       'https://join?session=K7P4AB', 'motioncricket://join?session=K7P4AB\n'):
             with self.subTest(value=value), self.assertRaises(ValueError): parse_join_uri(value)
 
@@ -78,14 +103,14 @@ class ProtocolTests(unittest.TestCase):
         try:
             self.assertEqual(app.session.get(), '')
             self.assertIsNone(app.worker)
-            app.receive_uri('motioncricket://join?session=K7P4AB')
-            self.assertEqual(app.session.get(), 'K7P4AB')
+            app.receive_uri(parse_arguments(['motioncricket://join/?session=TPJY8Y']).uri)
+            self.assertEqual(app.session.get(), 'TPJY8Y')
             self.assertIsNone(app.worker)
             with self.assertRaises(ValueError): app.receive_uri('motioncricket://run?session=K7P4AB')
-            self.assertEqual(app.session.get(), 'K7P4AB')
+            self.assertEqual(app.session.get(), 'TPJY8Y')
             app.worker = Mock(); app.worker.is_alive.return_value = True
             app.receive_uri('motioncricket://join?session=Z8Q5CD')
-            self.assertEqual(app.session.get(), 'K7P4AB')
+            self.assertEqual(app.session.get(), 'TPJY8Y')
             self.assertEqual(app.pending_session, 'Z8Q5CD')
             self.assertFalse(app.stop.is_set())
             app.worker.is_alive.return_value = False
@@ -102,8 +127,16 @@ class ProtocolTests(unittest.TestCase):
             second = TrackerInstance()
             try:
                 self.assertTrue(first.primary); self.assertFalse(second.primary)
-                self.assertTrue(second.forward('motioncricket://join?session=K7P4AB'))
-                self.assertEqual(first.messages.get(timeout=2), 'motioncricket://join?session=K7P4AB')
+                uri = parse_arguments(['motioncricket://join/?session=TPJY8Y']).uri
+                self.assertTrue(second.forward(uri))
+                root = tk.Tk(); root.withdraw()
+                app = Launcher(root)
+                try:
+                    app.instance = first
+                    app.poll()
+                    self.assertEqual(app.session.get(), 'TPJY8Y')
+                    self.assertIsNone(app.worker, 'Forwarding must not CONNECT')
+                finally: root.destroy()
                 self.assertTrue(second.forward(None))
                 self.assertEqual(first.messages.get(timeout=2), '')
                 with self.assertRaises(ValueError): second.forward('bad')

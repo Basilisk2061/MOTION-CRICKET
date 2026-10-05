@@ -9,7 +9,8 @@ import threading
 import time
 
 KEY = r'Software\Classes\motioncricket'
-URI = re.compile(r'motioncricket://join\?session=([A-HJ-NP-Z2-9]{6})', re.ASCII)
+# Windows ShellExecute canonicalizes an empty authority path to one slash.
+URI = re.compile(r'motioncricket://join/?\?session=([A-HJ-NP-Z2-9]{6})', re.ASCII)
 
 
 def parse_join_uri(value):
