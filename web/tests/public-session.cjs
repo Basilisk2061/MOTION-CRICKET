@@ -6,6 +6,10 @@ assert.equal(publicPhoneURL(origin, session), origin + '/controller?session=K7P4
 assert.equal(relaySocketURL('/cv-ws', origin, session), 'wss://motion-cricket.example/relay?session=K7P4AB&role=game&channel=cv')
 assert.equal(relaySocketURL('/phone-ws?role=phone', origin, session), 'wss://motion-cricket.example/relay?session=K7P4AB&role=phone')
 assert.equal(relaySocketURL('/phone-ws?role=game', origin, session), 'wss://motion-cricket.example/relay?session=K7P4AB&role=game&channel=phone')
+const production = 'https://play.motioncricket.workers.dev'
+assert.equal(publicPhoneURL(production, session), production + '/controller?session=K7P4AB')
+assert.equal(relaySocketURL('/cv-ws', production, session), 'wss://play.motioncricket.workers.dev/relay?session=K7P4AB&role=game&channel=cv')
+assert.equal(relaySocketURL('/phone-ws?role=phone', production, session), 'wss://play.motioncricket.workers.dev/relay?session=K7P4AB&role=phone')
 for (let i=0;i<100;i++) assert(SESSION_PATTERN.test(newSession()))
 assert(!SESSION_PATTERN.test('bad-code'))
 assert.equal(load('publicSession').PUBLIC_RELAY, false, 'Unbuilt/local tests retain local transport')

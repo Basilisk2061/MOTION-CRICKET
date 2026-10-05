@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),ts=require('typescript')
 const load=require('./tactical-loader.cjs')
 global.__PUBLIC_RELAY__=true
-global.location={origin:'https://motion-cricket.motion-cricket.workers.dev',search:'?session=K7P4AB',pathname:'/'}
+global.location={origin:'https://play.motioncricket.workers.dev',search:'?session=K7P4AB',pathname:'/'}
 global.localStorage={getItem:()=>null,setItem:()=>{}}
 const {SETUP_STEPS,setupCanAdvance,trackerAsset,TRACKER_FILE}=load('onboarding')
 assert.equal(SETUP_STEPS.length,9)

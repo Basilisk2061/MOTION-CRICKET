@@ -14,8 +14,8 @@ import webbrowser
 from tkinter import messagebox
 from tracker_protocol import parse_join_uri, register, unregister, registered, TrackerInstance
 
-PUBLIC_GAME = "https://motion-cricket.motion-cricket.workers.dev"
-PUBLIC_RELAY = "wss://motion-cricket.motion-cricket.workers.dev/relay"
+PUBLIC_GAME = "https://play.motioncricket.workers.dev"
+PUBLIC_RELAY = "wss://play.motioncricket.workers.dev/relay"
 SESSION_PATTERN = re.compile(r"[A-HJ-NP-Z2-9]{6}")
 
 

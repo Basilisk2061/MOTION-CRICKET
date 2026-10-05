@@ -34,7 +34,7 @@ states.length=0;cursor=0;tree=component('AudioSettingsPanel',react).default();ef
 const input=nodes().find(n=>n.type==='input'&&n.props.id==='volume-crowd');input.props.onChange({target:{value:'48'}});assert.equal(settings.getAudioSettings().crowd,48)
 const mute=nodes().find(n=>n.type==='button');mute.props.onClick();assert.equal(settings.getAudioSettings().crowdMuted,false)
 assert(!load('menuNavigation').MENU_CHOICES.MAIN.some(c=>c.label==='TRAINING'))
-global.__PUBLIC_RELAY__=true;global.location={origin:'https://motion-cricket.motion-cricket.workers.dev',search:'?session=K7P4AB',pathname:'/'}
+global.__PUBLIC_RELAY__=true;global.location={origin:'https://play.motioncricket.workers.dev',search:'?session=K7P4AB',pathname:'/'}
 const Launch=component('TrackerLaunch',react,{'./TrackerDownload':{default:()=>null},'./publicSession':{PUBLIC_RELAY:true,currentSession:()=> 'K7P4AB'}})
 assert.equal(Launch.trackerJoinURL('K7P4AB'),'motioncricket://join?session=K7P4AB');for(const v of ['ABC123','bad','K7P4AB&x=1'])assert.equal(Launch.trackerJoinURL(v),null)
 states.length=0;cursor=0;tree=Launch.default();const link=nodes().find(n=>n.type==='a');assert.equal(link.props.href,'motioncricket://join?session=K7P4AB');assert.equal(states[0],false);link.props.onClick();assert.equal(states[0],true)
