@@ -3,12 +3,13 @@ import { defineConfig } from 'vite'
 import { phoneRelay } from './phone-relay.mjs'
 import { phoneSetupPlugin } from './phone-setup.mjs'
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   const phone = mode === 'phone'
   if (phone && (!process.env.MOTION_TLS_KEY || !process.env.MOTION_TLS_CERT)) {
     throw new Error('Set MOTION_TLS_KEY and MOTION_TLS_CERT to trusted mkcert PEM files; see PHONE_CONTROLLER.md')
   }
   return {
+    define: { __PUBLIC_RELAY__: JSON.stringify(command === 'build') },
     plugins: [phoneRelay(),phoneSetupPlugin(phone,phone?readFileSync(process.env.MOTION_TLS_CERT):undefined)],
     server: {
       host: phone ? '0.0.0.0' : '127.0.0.1', port: 5173, strictPort: true,

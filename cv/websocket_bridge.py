@@ -2,10 +2,14 @@
 import asyncio
 import json
 import math
+import os
+import re
 import threading
 import time
 
 from websockets.asyncio.server import serve
+from websockets.asyncio.client import connect
+from urllib.parse import urlsplit, urlunsplit, urlencode
 from websockets.exceptions import ConnectionClosed
 
 
@@ -43,6 +47,8 @@ def controller_json(controller, calibrated, telemetry=None):
 class WebSocketBridge:
     def __init__(self, port=8765):
         self.port = port
+        self.relay_url = os.environ.get("MOTION_RELAY_URL", "")
+        self.session = os.environ.get("MOTION_SESSION", "").upper()
         self.latest = {}
         self.lock = threading.Lock()
         self.stop = threading.Event()
@@ -93,6 +99,9 @@ class WebSocketBridge:
 
     async def _serve(self):
         self.loop = asyncio.get_running_loop()
+        if self.relay_url:
+            await self._public_relay()
+            return
         async with serve(
             self._client, "127.0.0.1", self.port,
             compression=None, write_limit=4096, max_queue=1,
@@ -101,6 +110,27 @@ class WebSocketBridge:
             print(f"WebSocket: listening on ws://127.0.0.1:{self.port}\nClients: 0")
             while not self.stop.is_set():
                 await asyncio.sleep(.05)
+
+    async def _public_relay(self):
+        url = urlsplit(self.relay_url)
+        if (url.scheme != "wss" or not url.hostname or url.username or url.password
+                or url.query or url.fragment or url.path != "/relay"
+                or not re.fullmatch(r"[A-HJ-NP-Z2-9]{6}", self.session)):
+            raise ValueError("Use MOTION_RELAY_URL=wss://<public-host>/relay and a six-character MOTION_SESSION")
+        target = urlunsplit((url.scheme, url.netloc, url.path,
+                            urlencode({"session": self.session, "role": "tracker"}), ""))
+        print(f"WebSocket: public relay / session {self.session}")
+        while not self.stop.is_set():
+            try:
+                async with connect(target, compression=None, max_queue=1, write_limit=4096,
+                                   max_size=4096, open_timeout=10, close_timeout=.5) as socket:
+                    await self._client(socket)
+            except Exception as error:
+                print(f"Relay disconnected ({type(error).__name__}); retrying. CV continues.")
+            for _ in range(20):
+                if self.stop.is_set():
+                    return
+                await asyncio.sleep(.1)
 
     async def _client(self, socket):
         self.clients += 1

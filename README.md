@@ -4,6 +4,8 @@
 
 A motion-controlled 3D cricket game where you physically move the bat rather than select a canned shot animation. A webcam tracks right-wrist position, while a smartphone's motion sensors supply bat orientation. The browser combines both inputs to drive the bat and resolve contact with the ball in real time.
 
+**[Public demo](https://motion-cricket.motion-cricket.workers.dev)** — open on your desktop, then use its phone setup QR/session link. Webcam input still requires the local Python tracker.
+
 <p align="center">
   <img src="docs/assets/gameplay-hero.png" alt="First-person Motion-Cricket gameplay with the bat, stadium, scoreboard and field map" width="100%">
 </p>
@@ -29,7 +31,7 @@ Smartphone   -> orientation / motion sensors -> calibrated quaternion -> bat rot
                            Bat-ball contact and gameplay
 ```
 
-The Python bridge publishes controller JSON on `ws://127.0.0.1:8765`. Vite proxies this through `/cv-ws`, while its `/phone-ws` relay forwards phone controller messages to the game. Latest-state delivery avoids a backlog of old sensor samples.
+Locally, the Python bridge publishes controller JSON on `ws://127.0.0.1:8765`. Vite proxies this through `/cv-ws`, while its `/phone-ws` relay forwards phone controller messages to the game. The public demo uses same-origin secure WebSockets through a Cloudflare Worker and an ephemeral six-character room; phone and tracker join the desktop's room without sharing a LAN. Latest-state delivery avoids a backlog of old sensor samples.
 
 The phone is not an absolute-position tracker: accelerometer data is **not** integrated to obtain handle position. Webcam wrist tracking does not provide the phone-controlled bat orientation.
 
@@ -166,7 +168,15 @@ motion-cricket/
 
 ## Getting Started
 
-The supported workflow is local development with a laptop and phone on the same trusted LAN. Public deployment and production pairing are not configured yet.
+For the public demo, open the desktop site and use the session link/QR in phone setup. To add webcam position, use the displayed tracker commands, or set these variables from your cloned repository root before running the existing tracker:
+
+```powershell
+$env:MOTION_RELAY_URL = 'wss://motion-cricket.motion-cricket.workers.dev/relay'
+$env:MOTION_SESSION = '<six-character-code-shown-by-the-game>'
+.\cv\.venv\Scripts\python.exe .\cv\main.py
+```
+
+Webcam processing stays local; only controller state is sent. Keep the room code private. Remove those environment variables to return to local CV mode. [Deployment configuration](cloudflare/README.md) documents the free-tier relay. The local development workflow below still uses a shared trusted LAN.
 
 ### Prerequisites
 
@@ -254,11 +264,11 @@ Webcam frames are processed by the local Python application. The CV WebSocket se
 
 Replays store bounded, in-memory game-space visual states rather than webcam footage or raw phone sensor recordings. The provided tracking image has been privacy-treated for publication.
 
-The development relay has no user authentication. Use it only on a trusted LAN; do not port-forward it or expose it publicly. Keep private keys outside the project and web-served directories. These are development precautions, not a production security guarantee.
+The local development relay has no user authentication. Use it only on a trusted LAN; do not port-forward it or expose it publicly. The public relay isolates rooms but uses possession of the code for pairing, not account authentication; anyone with that code can join. Controller data crosses Cloudflare in public mode; webcam frames remain local. Keep private keys outside the project and web-served directories. This demo is not a production security guarantee.
 
 ## Current Status
 
-An active prototype with functional physical batting, AI deliveries, fielding, bowling practice and replay systems. Continued refinement focuses on tracking robustness, sensor differences between phones, contact feel and presentation through physical playtesting. Setup currently involves a separate Python tracker and trusted local certificates.
+An active prototype with functional physical batting, AI deliveries, fielding, bowling practice and replay systems. Continued refinement focuses on tracking robustness, sensor differences between phones, contact feel and presentation through physical playtesting. The public demo uses managed HTTPS; webcam position still needs a separate Python tracker. Local phone development uses trusted local certificates.
 
 ## Future Work
 

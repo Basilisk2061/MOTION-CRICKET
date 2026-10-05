@@ -48,6 +48,9 @@ desktop.ini
 
 # Temporary / cache
 .tools/
+.wrangler/
+.dev.vars
+.dev.vars.*
 tmp/
 temp/
 .cache/

@@ -1,4 +1,5 @@
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three'
+import { PUBLIC_RELAY, relaySocketURL } from './publicSession'
 
 export const PHONE_STALE_MS = 350
 export const PHONE_TO_BAT = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI)
@@ -72,5 +73,6 @@ export function parsePhone(raw: string): PhoneMessage | null {
   } catch { return null }
 }
 export function socketURL(path: string) {
+  if (PUBLIC_RELAY) return relaySocketURL(path)
   return `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${path}`
 }

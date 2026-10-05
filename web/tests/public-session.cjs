@@ -1,0 +1,12 @@
+const assert = require('node:assert/strict')
+const load = require('./tactical-loader.cjs')
+const { SESSION_PATTERN, relaySocketURL, publicPhoneURL, newSession } = load('publicSession')
+const session = 'K7P4AB', origin = 'https://motion-cricket.example'
+assert.equal(publicPhoneURL(origin, session), origin + '/controller?session=K7P4AB')
+assert.equal(relaySocketURL('/cv-ws', origin, session), 'wss://motion-cricket.example/relay?session=K7P4AB&role=game&channel=cv')
+assert.equal(relaySocketURL('/phone-ws?role=phone', origin, session), 'wss://motion-cricket.example/relay?session=K7P4AB&role=phone')
+assert.equal(relaySocketURL('/phone-ws?role=game', origin, session), 'wss://motion-cricket.example/relay?session=K7P4AB&role=game&channel=phone')
+for (let i=0;i<100;i++) assert(SESSION_PATTERN.test(newSession()))
+assert(!SESSION_PATTERN.test('bad-code'))
+assert.equal(load('publicSession').PUBLIC_RELAY, false, 'Unbuilt/local tests retain local transport')
+console.log('PASS: secure public URL selection, phone session URL, six-character random codes and local fallback')

@@ -4,6 +4,7 @@ import { deviceQuaternion, gyroToBat, quaternionVelocity, relativeBat, socketURL
 import { BowlGesture } from './bowlGesture'
 import { BowlingController } from './bowlingController'
 import PhoneBowlingPanel from './PhoneBowlingPanel'
+import { PUBLIC_RELAY, currentSession } from './publicSession'
 
 type PermissionAPI = { requestPermission?: () => Promise<string> }
 const vector = (v: { x: number | null; y: number | null; z: number | null } | null) =>
@@ -28,6 +29,7 @@ export default function PhoneController() {
     message: null as PhoneMessage | null })
 
   useEffect(() => {
+    if (PUBLIC_RELAY && !currentSession()) { setNotice('Open the session link or QR code from the desktop game.'); return }
     let disposed = false, retry: ReturnType<typeof setTimeout>, frame = 0, sent = -1, sentAt = 0, poseAt=0
     const connect = () => {
       if (disposed) return
