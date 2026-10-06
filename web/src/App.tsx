@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import useAutoHideCursor from './useAutoHideCursor'
 
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 
@@ -1438,6 +1439,7 @@ export default function App() {
   const [onboarding,setOnboarding]=useState(()=>!hasSeen(HELP_KEYS.tutorial))
   const [helpPaused,setHelpPaused]=useState(false)
   const suspended=onboarding||helpPaused
+  useAutoHideCursor(modes.status==='PLAYING' && !suspended)
   useEffect(()=>{
     if(!suspended||modes.status==='MENU')return
     const block=()=>{feed.bowlRequests.current=0;feed.publishBowlReady(false,performance.now())}
