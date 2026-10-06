@@ -59,7 +59,7 @@ export default function MainMenu({page,onNavigate,onChoose,onLab,phoneConnected,
  return <main className="game-menu-screen">
   <Canvas shadows dpr={[1,1.5]} camera={{position:[1,1.6,6],fov:48}}><Pavilion/></Canvas>
   <section className="game-menu-content" aria-label={`${page} menu`}>
-   <div className="game-menu-brand"><span>PHYSICAL PLAY. REAL CRICKET.</span><h1>MOTION<br/>CRICKET<span className="brand-dot">.</span></h1></div>
+   <div className="game-menu-brand"><span>PHYSICAL PLAY. REAL CRICKET.</span><h1>MOTION<br/>CRICKET<span className="brand-dot">.</span></h1><p className="game-menu-description">A browser cricket game.<br/>Webcam hand tracking. Smartphone motion. Your physical swing.</p></div>
    <div key={page} className="game-menu-page">
     {page!=='MAIN' && <h2>{page}</h2>}
     {page==='TRAINING'||page==='RECORDS'?<p className="menu-coming">Coming soon.<br/><small>More ways to play are on the way.</small></p>:null}

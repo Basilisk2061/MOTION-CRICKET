@@ -1,0 +1,5 @@
+/controller
+  X-Robots-Tag: noindex
+
+/controller/
+  X-Robots-Tag: noindex

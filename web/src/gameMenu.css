@@ -20,3 +20,5 @@
 @media(max-width:600px){.game-menu-content{left:10%;top:49%}.game-menu-brand h1{font-size:64px}.game-menu-brand>span{font-size:8px}.game-menu-phone{top:14px;right:16px;font-size:8px}.game-menu-footer{left:10%;bottom:18px;right:16px}.game-menu-footer span:last-child{display:none}}
 @media(max-height:610px){.game-menu-brand h1{font-size:54px;margin-bottom:20px}.game-menu-option{font-size:21px;padding:6px 0}.game-menu-page{min-height:170px}.game-menu-content{top:48%}}
 @media(prefers-reduced-motion:reduce){.game-menu-page{animation:none}.game-menu-option{transition:none}}
+.game-menu-description{font-size:12px;line-height:1.6;color:#a1aaa9;margin:-24px 0 24px;max-width:380px}
+@media(max-height:610px){.game-menu-description{margin:-10px 0 16px;font-size:11px}}

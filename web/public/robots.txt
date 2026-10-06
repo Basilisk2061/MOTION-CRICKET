@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://play.motioncricket.workers.dev/sitemap.xml
