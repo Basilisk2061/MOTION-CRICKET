@@ -2,11 +2,13 @@
 import asyncio
 import json
 import tempfile
+import time
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 
 from tracker_protocol import TrackerInstance, parse_join_uri
-from transport_health import MotionTransport
+from transport_health import MotionTransport, MOTION_TIMEOUT, retry_delay
 from websocket_bridge import WebSocketBridge
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
@@ -60,6 +62,95 @@ async def transport_check():
     return {'application_heartbeat': 'PASS: actual monitor exchanged fresh pings/pongs on loopback',
             'transport_health': 'PASS: imported and running inside frozen EXE',
             'recovery': 'PASS: new epoch resent current snapshot; cumulative ACK advanced'}
+
+
+async def resilience_check():
+    """Exercise the frozen bridge's real reconnect loop against an isolated relay."""
+    import websocket_bridge as module
+    bridge = WebSocketBridge()
+    bridge.relay_url, bridge.session = 'wss://example.com/relay', 'TPJY8Y'
+    attempts, failures, owners = [], [], []
+    progress = []
+    original_connect = module.connect
+    assert MOTION_TIMEOUT == 1
+    assert [retry_delay(n) for n in range(7)] == [0, .25, .5, 1, 2, 2, 2]
+
+    def diagnostic(message):
+        if message in ('Motion delivery stalled', 'Application heartbeat stale'):
+            failures.append((time.monotonic(), message))
+    bridge._debug = diagnostic
+
+    async def relay(socket):
+        latest, ack, started = None, 0, time.monotonic()
+        connection = len(attempts)
+        try:
+            async for payload in socket:
+                m = json.loads(payload)
+                if m['type'] == 'controller':
+                    latest = m['_transport']
+                elif m['type'] == 'transport-ping':
+                    elapsed = time.monotonic()-started
+                    if connection == 7 and elapsed > .35:
+                        continue  # Native socket stays OPEN; application responses stop.
+                    if latest:
+                        if elapsed < .35 or connection == 8:
+                            ack = latest['sequence']
+                            progress.append((connection, ack))
+                        await socket.send(json.dumps({'type':'transport-pong','sequence':m['sequence'],
+                            'motion':{**latest,'acknowledged':ack,'expected':True}}))
+                        if connection == 8 and ack:
+                            bridge.stop.set()
+                    else:
+                        await socket.send(json.dumps({'type':'transport-pong','sequence':m['sequence']}))
+        except module.ConnectionClosed:
+            pass
+
+    async with serve(relay, '127.0.0.1', 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        def connect_local(target, **options):
+            attempts.append(time.monotonic())
+            query = parse_qs(urlsplit(target).query)
+            owners.append((query['owner'][0], int(query['generation'][0])))
+            if 2 <= len(attempts) <= 6:
+                raise OSError('Intentional packaged retry fault')
+            return original_connect(f'ws://127.0.0.1:{port}', **options)
+        async def publish():
+            while not bridge.stop.is_set():
+                with bridge.lock:
+                    bridge.latest['controller'] = json.dumps({'type':'controller','timestamp':time.monotonic()})
+                bridge._notify()
+                await asyncio.sleep(1/30)
+        publisher = asyncio.create_task(publish())
+        try:
+            with patch.object(module, 'connect', side_effect=connect_local):
+                await asyncio.wait_for(bridge._public_relay(), 20)
+        finally:
+            bridge.stop.set(); publisher.cancel()
+            await asyncio.gather(publisher, return_exceptions=True)
+    assert len(attempts) == 8 and len(failures) == 2
+    assert failures[0][1] == 'Motion delivery stalled'
+    assert failures[1][1] == 'Application heartbeat stale'
+    assert attempts[1]-failures[0][0] < .25, 'First reconnect must not add a one-second delay'
+    assert attempts[7]-failures[1][0] < .25, 'Fresh ACK progress must reset retry backoff'
+    for index, expected in enumerate([.25,.5,1,2,2], start=2):
+        delay = attempts[index]-attempts[index-1]
+        assert expected-.03 <= delay < expected+.3, (index, delay)
+    assert len({owner for owner, _ in owners}) == 1
+    assert [generation for _, generation in owners] == list(range(1,9))
+    assert any(connection == 7 for connection, _ in progress)
+    health = MotionTransport(lambda: 0)
+    old = health.epoch
+    health.wrap('{"type":"controller"}')
+    health.reset('b'*32); health.wrap('{"type":"controller"}')
+    ping = health.ping()
+    health.pong({'sequence':ping['sequence'],'motion':{'epoch':old,'expected':True,'acknowledged':999}})
+    assert health.ack == 0
+    return {'producer_watchdog':'PASS: actual bundled ACK watchdog retired stalled delivery',
+            'open_but_dead':'PASS: OPEN socket with missing application pongs retired',
+            'immediate_reconnect':'PASS: real retry loop, first replacement under 250ms',
+            'retry_backoff':'PASS: 250/500/1000ms then bounded at 2000ms',
+            'backoff_reset':'PASS: fresh ACK progress restored immediate replacement',
+            'generation':'PASS: stable owner, increasing generations, old epoch ACK ignored'}
 
 
 def launcher_check(app):

@@ -5,13 +5,15 @@ const TYPES = {
   tracker: ['controller', 'bat', 'transport-ping'],
   game: ['bowl-ready', 'bowling-lab-state', 'transport-ping', 'transport-ack', 'transport-resync'],
 }
-const MOTION_TIMEOUT = 6000, WINDOW = 8
+const MOTION_TIMEOUT = 1000, WINDOW = 8
 const metadata = m => m && /^[a-f0-9]{32}$/.test(m.epoch ?? '') && Number.isSafeInteger(m.sequence) && m.sequence > 0
 export function connection(url) {
   const session = url.searchParams.get('session'), role = url.searchParams.get('role')
   const channel = role === 'game' ? url.searchParams.get('channel') : role
+  const owner=url.searchParams.get('owner'), generation=Number(url.searchParams.get('generation'))
+  if(owner!==null && (!/^[a-f0-9]{32}$/.test(owner)||!Number.isSafeInteger(generation)||generation<1))return null
   return SESSION.test(session ?? '') && role in TYPES && ['cv', 'phone', 'tracker'].includes(channel)
-    && (role !== 'game' || ['cv', 'phone'].includes(channel)) ? { session, role, channel } : null
+    && (role !== 'game' || ['cv', 'phone'].includes(channel)) ? { session, role, channel, ...(owner?{owner,generation}:{}) } : null
 }
 export function validMessage(role, data) {
   if (typeof data !== 'string' || new TextEncoder().encode(data).length > 4096) return null
@@ -43,7 +45,11 @@ export default {
   },
 }
 export class Room {
-  constructor(ctx) { this.ctx = ctx }
+  constructor(ctx) {
+    this.ctx = ctx
+    // Four role high-water marks, mirrored in live attachments for hibernation.
+    this.owners = Object.assign({}, ...this.sockets().map(ws=>ws.deserializeAttachment().owners??{}))
+  }
   // Temporary, memory-only diagnostics. No timers or persistent room state.
   debugEvent(event) {
     const targets = this.sockets().filter(ws => { const a = ws.deserializeAttachment(); return a.role === 'game' && a.channel === 'cv' && a.debug })
@@ -119,9 +125,15 @@ export class Room {
   fetch(request) {
     const c = connection(new URL(request.url))
     if (!c) return new Response('Invalid connection', { status: 400 })
+    const key=`${c.role}:${c.channel}`, prior=this.owners[key]
+    if(c.owner && prior?.owner===c.owner && c.generation<=prior.generation)
+      return new Response('Retired connection generation', {status:409})
     // Only explicit heartbeat participants have leases. Never evict a healthy peer/other role.
     const sockets = this.sockets().filter(ws => {
       const a = ws.deserializeAttachment()
+      if(a.role===c.role && a.channel===c.channel && c.owner && c.owner===a.owner && c.generation>a.generation){
+        this.retire(ws,'Connection replaced');return false
+      }
       if (a.role === c.role && a.channel === c.channel && Date.now()-(a.healthAt ?? a.joinedAt ?? Date.now()) > 6000) {
         this.debugEvent({ event: 'STALE_REPLACEMENT', role: a.role, channel: a.channel })
         this.retire(ws, 'Transport heartbeat stale')
@@ -134,10 +146,22 @@ export class Room {
     const [client, server] = Object.values(new WebSocketPair())
     this.ctx.acceptWebSocket(server)
     server.serializeAttachment({ ...c, joinedAt: Date.now(), debug: new URL(request.url).searchParams.get('motionDebug') === '1', ready: false, labActive: false, labReady: false, rateAt: Date.now(), count: 0 })
+    if(c.owner){
+      this.owners[key]={owner:c.owner,generation:c.generation}
+      for(const peer of this.sockets()){
+        const a=peer.deserializeAttachment();a.owners=this.owners;peer.serializeAttachment(a)
+      }
+    }
     if (c.role === 'game') {
       const source = this.source(c.channel)
       if (source) {
-        const a = source.deserializeAttachment(); a.latest = {}; a.pendingAt = null; source.serializeAttachment(a)
+        const a = source.deserializeAttachment(); a.latest = {}; a.pendingAt = null
+        if(c.owner && a.epoch){
+          const epoch=crypto.randomUUID().replaceAll('-','')
+          const g=server.deserializeAttachment();g.epoch=epoch;g.inflight=[];g.recovery=true;server.serializeAttachment(g)
+          a.requiredEpoch=epoch;a.recoveryAt=Date.now()
+          source.serializeAttachment(a);this.send(source,{type:'transport-resync',epoch})
+        }else source.serializeAttachment(a)
       }
     }
     this.debugEvent({ event: 'JOIN', role: c.role, channel: c.channel })
@@ -247,6 +271,6 @@ export class Room {
     }
     this.debugSummary()
   }
-  webSocketClose(ws, code, reason) { this.debugEvent({ event: 'CLOSE', role: ws.deserializeAttachment().role, code, reason }); ws.close(code); this.phoneStatus() }
-  webSocketError(ws) { this.debugEvent({ event: 'ERROR', role: ws.deserializeAttachment().role }); ws.close(1011, 'Socket error'); this.phoneStatus() }
+  webSocketClose(ws, code, reason) { this.debugEvent({ event: 'CLOSE', role: ws.deserializeAttachment().role, code, reason }); this.retire(ws,'Closed'); this.phoneStatus() }
+  webSocketError(ws) { this.debugEvent({ event: 'ERROR', role: ws.deserializeAttachment().role }); this.retire(ws,'Socket error'); this.phoneStatus() }
 }

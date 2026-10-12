@@ -6,12 +6,13 @@ import os
 import re
 import threading
 import time
+import uuid
 
 from websockets.asyncio.server import serve
 from websockets.asyncio.client import connect
 from urllib.parse import urlsplit, urlunsplit, urlencode
 from websockets.exceptions import ConnectionClosed
-from transport_health import MotionTransport
+from transport_health import MotionTransport, retry_delay
 
 
 def controller_json(controller, calibrated, telemetry=None):
@@ -132,7 +133,13 @@ class WebSocketBridge:
         target = urlunsplit((url.scheme, url.netloc, url.path,
                             urlencode({"session": self.session, "role": "tracker"}), ""))
         print(f"WebSocket: public relay / session {self.session}")
+        owner, generation, failures = uuid.uuid4().hex, 0, 0
         while not self.stop.is_set():
+            generation += 1
+            target = urlunsplit((url.scheme, url.netloc, url.path,
+                                urlencode({"session": self.session, "role": "tracker", "owner": owner,
+                                           "generation": generation}), ""))
+            health = None
             try:
                 self._debug('CONNECT ATTEMPT')
                 async with connect(target, compression=None, max_queue=1, write_limit=4096,
@@ -149,13 +156,21 @@ class WebSocketBridge:
                     finally:
                         sender.cancel(); monitor.cancel()
                         await asyncio.gather(sender, monitor, return_exceptions=True)
+                        # Don't spend another close-handshake timeout on a path
+                        # just proven dead. The replacement has a new owner generation.
+                        if not self.stop.is_set() and getattr(socket, 'transport', None):
+                            socket.transport.abort()
             except Exception as error:
                 self._debug(f'CONNECT ERROR {type(error).__name__}: {error}')
                 print(f"Relay disconnected ({type(error).__name__}); retrying. CV continues.")
-            # Native heartbeat detects half-open streams in a few seconds; retry off the CV thread.
-            self._debug('RECONNECT SCHEDULED 1000ms')
+            if health is not None and health.ack:
+                failures = 0
+            delay = retry_delay(failures)
+            failures += 1
+            self._debug(f'RECONNECT SCHEDULED {delay*1000:.0f}ms')
             self.transport_reconnects += 1
-            for _ in range(10):
+            until = time.monotonic() + delay
+            while time.monotonic() < until:
                 if self.stop.is_set():
                     return
                 await asyncio.sleep(.1)
@@ -170,6 +185,7 @@ class WebSocketBridge:
                     self.transport_stalls += 1
                     self._notify() # Resend the current replaceable snapshots, never a historical queue.
         receiver = asyncio.create_task(receive())
+        ping_at = -float('inf')
         try:
             while not self.stop.is_set():
                 if receiver.done():
@@ -182,13 +198,16 @@ class WebSocketBridge:
                         self.transport_stalls += 1
                     self._debug(reason)
                     return
-                ping = health.ping()
-                await asyncio.wait_for(socket.send(json.dumps(ping)), timeout=.25)
-                self._debug(f'APPLICATION CV generation={health.epoch} produced={health.sequence} ack={health.ack} '
-                            f'reconnects={self.transport_reconnects} stalls={self.transport_stalls} '
-                            f'heartbeatAge={time.monotonic()-health.heartbeat_at:.1f}s '
-                            f'motionAge={0 if health.pending_at is None else time.monotonic()-health.pending_at:.1f}s')
-                await asyncio.sleep(1)
+                if time.monotonic()-ping_at >= .25:
+                    ping_at = time.monotonic()
+                    ping = health.ping()
+                    await asyncio.wait_for(socket.send(json.dumps(ping)), timeout=.25)
+                    if health.ping_sequence % 4 == 0:
+                        self._debug(f'APPLICATION CV generation={health.epoch} produced={health.sequence} ack={health.ack} '
+                                    f'reconnects={self.transport_reconnects} stalls={self.transport_stalls} '
+                                    f'heartbeatAge={time.monotonic()-health.heartbeat_at:.1f}s '
+                                    f'motionAge={0 if health.pending_at is None else time.monotonic()-health.pending_at:.1f}s')
+                await asyncio.sleep(.05)
         finally:
             receiver.cancel()
             await asyncio.gather(receiver, return_exceptions=True)

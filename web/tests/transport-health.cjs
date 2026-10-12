@@ -37,7 +37,7 @@ assert(!isTransportHeartbeat(JSON.stringify({type:'phone-controller'})))
 const fs=require('node:fs')
 for(const file of ['controller.ts','PhoneController.tsx']){
  const source=fs.readFileSync(require('node:path').join(__dirname,'../src',file),'utf8')
- assert(source.includes('if (isTransportHeartbeat(event.data)) return'),file+' excludes health traffic')
+ assert(source.includes('if (isTransportHeartbeat(event.data))') && /return/.test(source.slice(source.indexOf('if (isTransportHeartbeat(event.data))'),source.indexOf('if (isTransportHeartbeat(event.data))')+400)),file+' excludes health traffic')
 }
 assert(fs.readFileSync(require('node:path').join(__dirname,'../src/PhoneController.tsx'),'utf8').includes('sent = -1'), 'Phone resumes latest sensor state on reconnect')
 console.log('PASS: healthy/fresh/stale heartbeat, immediate retirement, clean reconnect, no backlog, receiver separation and phone resume')

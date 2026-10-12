@@ -249,9 +249,9 @@ def self_test(report):
     app.connect()
     assert app.worker is None and "valid" in app.status.get()
     app.session.set("K7P4AB")
-    from packaged_smoke import launcher_check, transport_check
+    from packaged_smoke import launcher_check, transport_check, resilience_check
     import asyncio
-    checks = {**launcher_check(app), **asyncio.run(transport_check())}
+    checks = {**launcher_check(app), **asyncio.run(transport_check()), **asyncio.run(resilience_check())}
     root.update()
     root.destroy()
     result = {"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "model": str(MODEL_PATH),

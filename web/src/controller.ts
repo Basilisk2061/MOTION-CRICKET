@@ -3,6 +3,7 @@ import { Vector3 } from 'three'
 import { watchTransport, isTransportHeartbeat } from './transportHealth'
 import { ConnectionGeneration } from './motionTransport'
 import { PhoneApplicationDebug } from './phoneApplicationDebug'
+import { PUBLIC_RELAY } from './publicSession'
 import { parsePhone, socketURL, type PhoneMessage } from './phone'
 import { parseBowlingRelease, parseBowlingPose, type BowlingPose, type BowlingRelease } from './bowlingController'
 
@@ -168,7 +169,7 @@ export function useController() {
       if (disposed) return
       logTransport('CV', 'RECONNECT ATTEMPT / CONNECT')
       const generation = owner.begin()
-      const ws = new WebSocket(socketURL('/cv-ws')); socket = ws
+      const ws = new WebSocket(owner.url(socketURL('/cv-ws'), PUBLIC_RELAY, generation)); socket = ws
       const health = watchTransport(ws, undefined, undefined, generation, owner.reconnects, owner.stalls)
       stopHealth = health
       ws.onopen = () => { if (!owner.owns(generation)) return; connected.current = true; logTransport('CV', opened ? 'OPEN / RECONNECTED' : 'OPEN'); opened = true }
@@ -180,6 +181,7 @@ export function useController() {
         const marker = typeof event.data === 'string' ? parseBat(event.data) : null
         const message = typeof event.data === 'string' ? parseController(event.data) : null
         if ((marker || message) && !health.accept(event.data)) return
+        if(marker || message)owner.healthy(generation)
         if (marker) bat.current = { message: marker, received: performance.now(), sequence: ++sequence }
         if (message && (!latest.current || message.timestamp>latest.current.message.timestamp)) {
           if (debugTransport) debugCounts.current.cvAccepted++
@@ -243,7 +245,7 @@ export function useController() {
       if (disposed) return
       logTransport('PHONE', 'RECONNECT ATTEMPT / CONNECT')
       const generation = owner.begin()
-      const ws = new WebSocket(socketURL('/phone-ws?role=game')); socket = ws
+      const ws = new WebSocket(owner.url(socketURL('/phone-ws?role=game'), PUBLIC_RELAY, generation)); socket = ws
       const health = watchTransport(ws, undefined, undefined, generation, owner.reconnects, owner.stalls, 'PHONE')
       stopHealth = health
       phoneSocket.current = ws
@@ -257,7 +259,7 @@ export function useController() {
         phoneApplication.current?.rawMessage(event.data)
         const message = parsePhone(event.data)
         if (message && !health.accept(event.data)) { if(phoneApplication.current)phoneApplication.current.transportReason='FRESHNESS_OR_EPOCH_REJECTED'; return }
-        if (message) { if (debugTransport) debugCounts.current.phoneAccepted++; phone.current = { message, received: performance.now() }; phoneApplication.current?.accept(phone.current,event.data); return }
+        if (message) { owner.healthy(generation); if (debugTransport) debugCounts.current.phoneAccepted++; phone.current = { message, received: performance.now() }; phoneApplication.current?.accept(phone.current,event.data); return }
         try {
           const status = JSON.parse(event.data)
           const pose=parseBowlingPose(status)

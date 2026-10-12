@@ -46,16 +46,21 @@ export default function PhoneController() {
       if (disposed) return
       log('CONNECT / RECONNECT ATTEMPT')
       const generation = owner.begin()
+      let healthyAck=0,healthyEpoch=''
       epoch = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2,'0')).join('')
       motionSequence = 0; producerMotion = null
-      const ws = new WebSocket(socketURL('/phone-ws?role=phone'))
+      const ws = new WebSocket(owner.url(socketURL('/phone-ws?role=phone'), PUBLIC_RELAY, generation))
       const health = watchTransport(ws, undefined, () => producerMotion, generation, owner.reconnects, owner.stalls, 'PHONE')
       stopHealth = health
       socket.current = ws
       ws.onopen = () => { if (!owner.owns(generation)) return; connected.current = true; sent = -1; log('OPEN') }
       ws.onmessage = event => {
         if (!owner.owns(generation)) return
-        if (isTransportHeartbeat(event.data)) return
+        if (isTransportHeartbeat(event.data)) {
+          if(health.progress.epoch!==healthyEpoch){healthyEpoch=health.progress.epoch;healthyAck=0}
+          if(health.progress.acknowledged>healthyAck){healthyAck=health.progress.acknowledged;owner.healthy(generation)}
+          return
+        }
         try {
           const m = JSON.parse(event.data)
           if (m.type === 'transport-resync' && parseTransportSequence({epoch:m.epoch, sequence:1}) && m.epoch !== epoch) {
@@ -77,7 +82,7 @@ export default function PhoneController() {
         lab.current={active:false,ready:false,at:0}
         gameReady.current.ready = false
         if (event.code === 1008) setNotice('Another phone is connected. Close its controller page first.')
-        if (!disposed) { log('RECONNECT SCHEDULED 1000ms'); owner.retry(generation, connect, event.reason) }
+        if (!disposed) { log('RECONNECT SCHEDULED (bounded retry)'); owner.retry(generation, connect, event.reason) }
       }
     }
     const tick = (now: number) => {

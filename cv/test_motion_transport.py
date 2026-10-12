@@ -1,9 +1,41 @@
 import json
 import unittest
-from transport_health import MotionTransport
+from transport_health import MotionTransport, retry_delay
 
 
 class MotionTransportTests(unittest.TestCase):
+    def test_fast_open_zombie_recovery(self):
+        self.health.wrap('{"type":"controller"}')
+        self.pong(0)
+        self.now = 1.0
+        self.assertIsNone(self.health.failure())
+        self.now = 1.05
+        self.assertIsNotNone(self.health.failure())
+
+    def test_resync_cannot_renew_missing_ack_lease(self):
+        self.health.wrap('{"type":"controller"}')
+        self.pong(0)
+        self.now = .8
+        self.health.reset('b' * 32)
+        self.health.wrap('{"type":"controller"}')
+        self.pong(0)
+        self.now = 1.3
+        self.pong(0)
+        self.assertEqual(self.health.failure(), 'Motion delivery stalled')
+
+    def test_ack_progress_renews_lease(self):
+        self.health.wrap('{"type":"controller"}')
+        self.pong(0)
+        self.now = 1.1
+        self.pong(1)
+        self.health.wrap('{"type":"controller"}')
+        self.now = 1.3
+        self.pong(1)
+        self.assertIsNone(self.health.failure())
+
+    def test_bounded_retry_delays(self):
+        self.assertEqual([retry_delay(n) for n in range(7)], [0, .25, .5, 1, 2, 2, 2])
+
     def setUp(self):
         self.now = 0
         self.health = MotionTransport(lambda: self.now)
