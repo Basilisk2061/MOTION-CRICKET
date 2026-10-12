@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Vector3 } from 'three'
 import { watchTransport, isTransportHeartbeat } from './transportHealth'
 import { ConnectionGeneration } from './motionTransport'
+import { PhoneApplicationDebug } from './phoneApplicationDebug'
 import { parsePhone, socketURL, type PhoneMessage } from './phone'
 import { parseBowlingRelease, parseBowlingPose, type BowlingPose, type BowlingRelease } from './bowlingController'
 
@@ -114,6 +115,8 @@ export function useController() {
     if (debugTransport) console.info(`[${new Date().toISOString()}] GAME WS ${channel} ${event}`)
   }
   const debugCounts = useRef({ cvRaw: 0, cvAccepted: 0, phoneRaw: 0, phoneAccepted: 0, cvRawAt: 0, phoneRawAt: 0 })
+  const phoneApplication = useRef<PhoneApplicationDebug | null>(null)
+  if(debugTransport && !phoneApplication.current)phoneApplication.current=new PhoneApplicationDebug()
   const relayDiagnostic = (data: unknown) => {
     if (!debugTransport || typeof data !== 'string') return false
     try {
@@ -208,6 +211,7 @@ export function useController() {
       logTransport('STATUS', `CV=${state(socket)} PHONE=${state(phoneSocket.current)} CV age=${age(latest.current?.received)} PHONE age=${age(phone.current?.received)}`)
       const c = debugCounts.current
       logTransport('COUNTS', `CV raw=${c.cvRaw} accepted=${c.cvAccepted} rawAge=${age(c.cvRawAt || undefined)} PHONE raw=${c.phoneRaw} accepted=${c.phoneAccepted} rawAge=${age(c.phoneRawAt || undefined)} (raw includes non-controller messages)`)
+      console.info('[PHONE APPLICATION]',phoneApplication.current?.report(now))
     }, 1000) : undefined
     // The render loop reads the newest snapshot; UI updates at only 10 Hz.
     const ui = setInterval(() => setDisplay({
@@ -250,9 +254,10 @@ export function useController() {
         if (relayDiagnostic(event.data)) return
         if (debugTransport) { debugCounts.current.phoneRaw++; debugCounts.current.phoneRawAt = performance.now() }
         if (typeof event.data !== 'string') return
+        phoneApplication.current?.rawMessage(event.data)
         const message = parsePhone(event.data)
-        if (message && !health.accept(event.data)) return
-        if (message) { if (debugTransport) debugCounts.current.phoneAccepted++; phone.current = { message, received: performance.now() }; return }
+        if (message && !health.accept(event.data)) { if(phoneApplication.current)phoneApplication.current.transportReason='FRESHNESS_OR_EPOCH_REJECTED'; return }
+        if (message) { if (debugTransport) debugCounts.current.phoneAccepted++; phone.current = { message, received: performance.now() }; phoneApplication.current?.accept(phone.current,event.data); return }
         try {
           const status = JSON.parse(event.data)
           const pose=parseBowlingPose(status)
@@ -279,6 +284,6 @@ export function useController() {
     connect()
     return () => { disposed = true; owner.dispose(); stopHealth(); socket?.close(); phoneSocket.current = null }
   }, [])
-  return { latest, bat, phone, phoneConnected, connected, display, telemetry, bowlRequests, publishBowlReady,
+  return { latest, bat, phone, phoneApplication, phoneConnected, connected, display, telemetry, bowlRequests, publishBowlReady,
     bowlingRelease,bowlingPose,publishBowlingLab }
 }

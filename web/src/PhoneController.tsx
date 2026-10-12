@@ -7,6 +7,7 @@ import PhoneBowlingPanel from './PhoneBowlingPanel'
 import { PUBLIC_RELAY, currentSession } from './publicSession'
 import { watchTransport, isTransportHeartbeat } from './transportHealth'
 import { ConnectionGeneration, motionSequence as parseTransportSequence } from './motionTransport'
+import { compactQuaternion } from './phoneApplicationDebug'
 
 type PermissionAPI = { requestPermission?: () => Promise<string> }
 const vector = (v: { x: number | null; y: number | null; z: number | null } | null) =>
@@ -24,6 +25,8 @@ export default function PhoneController() {
   const gestureNeutral = useRef(new Quaternion())
   const bowling = useRef(new BowlingController())
   const lab = useRef({active:false,ready:false,at:0})
+  const sensorDebug = useRef(new URLSearchParams(location.search).get('motionDebug')==='1'
+    ? {raw:null as Quaternion|null,relative:null as Quaternion|null,rawChanges:0,relativeChanges:0} : null)
   const data = useRef({ raw: null as Quaternion | null, neutral: null as Quaternion | null,
     rotation: new Quaternion(), omega: new Vector3(), motionAt: 0,
     rate: null as DeviceMotionEventRotationRate | null, acceleration: null as Vector3 | null,
@@ -106,6 +109,11 @@ export default function PhoneController() {
         : ws.bufferedAmount >= 4096 ? 'BUFFERED' : !d.message ? 'NO_MESSAGE' : now-d.at >= 200 ? 'STALE_SENSOR'
         : sent === d.sequence ? 'NO_NEW_SAMPLE' : now-sentAt < 1000/60 ? 'RATE_LIMIT' : 'NONE'
       log(`sensorAge=${d.at ? Math.round(now-d.at)+'ms' : 'NONE'} WS=${ws ? ['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState] : 'NONE'} attempted=${attempted} acceptedCalls=${accepted} buffered=${ws?.bufferedAmount ?? 0} suppressed=${reason}`)
+      console.info('[PHONE SENSOR]',{transport:producerMotion,sensorSequence:d.sequence,
+        rawDeviceQuaternion:compactQuaternion(d.raw),neutralQuaternion:compactQuaternion(d.neutral),
+        relativeQuaternion:compactQuaternion(sensorDebug.current?.relative),transmittedQuaternion:compactQuaternion(d.rotation),
+        rawChanges:sensorDebug.current?.rawChanges,relativeChanges:sensorDebug.current?.relativeChanges,
+        angularVelocity:d.omega.toArray(),motionAgeMs:Math.round(now-d.motionAt),calibrationId:d.calibrationId})
     }, 1000) : undefined
     return () => {
       disposed = true; clearInterval(ui); cancelAnimationFrame(frame)
@@ -133,6 +141,12 @@ export default function PhoneController() {
         ? new Vector3(bowlingRate.beta!,bowlingRate.gamma!,bowlingRate.alpha!).multiplyScalar(Math.PI/180):null
       bowling.current.sample(d.raw,rawGyro,Date.now())
       const next = d.neutral ? relativeBat(d.neutral, d.raw) : new Quaternion()
+      const trace=sensorDebug.current
+      if(trace){
+        if(trace.raw && trace.raw.angleTo(d.raw)>1e-6)trace.rawChanges++
+        if(trace.relative && trace.relative.angleTo(next)>1e-6)trace.relativeChanges++
+        trace.raw=d.raw.clone();trace.relative=next.clone()
+      }
       gesture.current.update(now, next, gestureNeutral.current, now,
         connected.current && !!d.neutral && gameReady.current.ready && now - gameReady.current.at < 1000)
       const rate = d.rate

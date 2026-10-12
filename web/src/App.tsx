@@ -283,6 +283,22 @@ function Play({
   const visualBat = useRef<Group>(null)
   const visualPosition = useMemo(() => new VisualBatPosition(), [game])
   const visualInverseRotation = useMemo(() => new Quaternion(), [])
+  useEffect(()=>{
+    if(!feed.phoneApplication.current||!visualBat.current)return
+    let mesh: Mesh | null = null
+    visualBat.current.traverse(object=>{if(!mesh&&(object as Mesh).isMesh)mesh=object as Mesh})
+    if(!mesh)return
+    const drawnMesh: Mesh=mesh, original=drawnMesh.onAfterRender
+    const position=new Vector3(), scale=new Vector3(), quaternion=new Quaternion()
+    const observed: typeof drawnMesh.onAfterRender=function(this: Mesh,...args){
+      original.apply(this,args)
+      this.matrixWorld.decompose(position,quaternion,scale)
+      feed.phoneApplication.current?.drawn(quaternion,performance.now())
+    }
+    drawnMesh.onAfterRender=observed
+    return()=>{if(drawnMesh.onAfterRender===observed)drawnMesh.onAfterRender=original}
+  },[feed.phoneApplication])
+  useEffect(()=>{if(suspended)feed.phoneApplication.current?.hold('SUSPENDED')},[suspended,feed.phoneApplication])
 
 
   // ============================================================
@@ -361,15 +377,16 @@ function Play({
   // ============================================================
 
   useFrame((_, elapsed) => {
-    if(suspendRef.current)return
+    if(suspendRef.current){feed.phoneApplication.current?.hold('SUSPENDED');return}
     if(replay.blocked){
-      feed.bowlRequests.current=0;feed.publishBowlReady(false,performance.now());bowlGesture.pause();return
+      feed.phoneApplication.current?.hold('REPLAY_BLOCKED');feed.bowlRequests.current=0;feed.publishBowlReady(false,performance.now());bowlGesture.pause();return
     }
     if(elapsed>0) debug.renderFps += .05*(1/elapsed-debug.renderFps)
     if (
       !bat.current ||
       !ball.current
     ) {
+      feed.phoneApplication.current?.hold('MISSING_SCENE_REFS')
       return
     }
 
@@ -448,6 +465,9 @@ function Play({
       source === 'PHONE'
         ? phoneTracked
         : markerTracked
+    const phoneGateReason=source!=='PHONE'?'SOURCE_NOT_PHONE':!phone?'NO_PHONE_SNAPSHOT':!feed.phoneConnected.current?'PHONE_STATUS_DISCONNECTED':now-phone.received>350?'PHONE_SAMPLE_STALE':!phone.message.calibrated?'PHONE_NOT_CALIBRATED':'NONE'
+    feed.phoneApplication.current?.hold(phoneGateReason,{source,connected:feed.phoneConnected.current,calibrated:phone?.message.calibrated,
+      calibrationId:phone?.message.calibrationId,sampleAge:phone?now-phone.received:null,phoneTracked})
 
 
     const authorityKey =
@@ -677,6 +697,7 @@ function Play({
 // --------------------------------------------------------
 
 const phoneBowlAllowed = !!(phoneTracked && phone?.message.calibrated)
+if(phoneTracked && phone)feed.phoneApplication.current?.consume(phone,rotation,neutralRotation,now)
     if(modes.status==='PLAYING') tactics.update(game,session,fielding)
 const bowlReady = !replay.inputBlocked && phoneBowlAllowed && game.state === 'READY' && !session.complete && modes.status === 'PLAYING'
 feed.publishBowlReady(bowlReady, now)
@@ -840,6 +861,9 @@ if (phoneTracked && phone) {
     const omega =
       phone?.message
         .angularVelocity
+    feed.phoneApplication.current?.finalTransform(current.rotation,{orientation:current.rotation.toArray(),
+      angularVelocity:omega,activeSwing,following:following.current,tracked,frameDt:elapsed,
+      contactEnabled:tracked&&following.current&&elapsed<.1})
 
 
     const level =
