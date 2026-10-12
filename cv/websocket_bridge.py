@@ -11,6 +11,7 @@ from websockets.asyncio.server import serve
 from websockets.asyncio.client import connect
 from urllib.parse import urlsplit, urlunsplit, urlencode
 from websockets.exceptions import ConnectionClosed
+from transport_health import MotionTransport
 
 
 def controller_json(controller, calibrated, telemetry=None):
@@ -59,6 +60,7 @@ class WebSocketBridge:
         self.debug = os.environ.get('MOTION_DEBUG') == '1'
         self.debug_output_at = self.debug_send_at = None
         self.debug_outputs = self.debug_sends = self.debug_timeouts = 0
+        self.transport_reconnects = self.transport_stalls = 0
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def _debug(self, text):
@@ -137,21 +139,65 @@ class WebSocketBridge:
                                    max_size=4096, open_timeout=10, close_timeout=.5,
                                    ping_interval=2, ping_timeout=3) as socket:
                     self._debug('OPEN / CONNECTED (including reconnect)')
-                    await self._client(socket)
+                    health = MotionTransport()
+                    sender = asyncio.create_task(self._client(socket, health))
+                    monitor = asyncio.create_task(self._application_health(socket, health))
+                    try:
+                        done, _ = await asyncio.wait([sender, monitor], return_when=asyncio.FIRST_COMPLETED)
+                        for task in done:
+                            task.result()
+                    finally:
+                        sender.cancel(); monitor.cancel()
+                        await asyncio.gather(sender, monitor, return_exceptions=True)
             except Exception as error:
                 self._debug(f'CONNECT ERROR {type(error).__name__}: {error}')
                 print(f"Relay disconnected ({type(error).__name__}); retrying. CV continues.")
             # Native heartbeat detects half-open streams in a few seconds; retry off the CV thread.
             self._debug('RECONNECT SCHEDULED 1000ms')
+            self.transport_reconnects += 1
             for _ in range(10):
                 if self.stop.is_set():
                     return
                 await asyncio.sleep(.1)
 
-    async def _client(self, socket):
+    async def _application_health(self, socket, health):
+        async def receive():
+            async for payload in socket:
+                message = json.loads(payload)
+                if message.get('type') == 'transport-pong':
+                    health.pong(message)
+                elif message.get('type') == 'transport-resync' and health.reset(message.get('epoch')):
+                    self.transport_stalls += 1
+                    self._notify() # Resend the current replaceable snapshots, never a historical queue.
+        receiver = asyncio.create_task(receive())
+        try:
+            while not self.stop.is_set():
+                if receiver.done():
+                    if socket.close_reason == 'Motion delivery stalled':
+                        self.transport_stalls += 1
+                    receiver.result(); return
+                reason = health.failure()
+                if reason:
+                    if reason == 'Motion delivery stalled':
+                        self.transport_stalls += 1
+                    self._debug(reason)
+                    return
+                ping = health.ping()
+                await asyncio.wait_for(socket.send(json.dumps(ping)), timeout=.25)
+                self._debug(f'APPLICATION CV generation={health.epoch} produced={health.sequence} ack={health.ack} '
+                            f'reconnects={self.transport_reconnects} stalls={self.transport_stalls} '
+                            f'heartbeatAge={time.monotonic()-health.heartbeat_at:.1f}s '
+                            f'motionAge={0 if health.pending_at is None else time.monotonic()-health.pending_at:.1f}s')
+                await asyncio.sleep(1)
+        finally:
+            receiver.cancel()
+            await asyncio.gather(receiver, return_exceptions=True)
+
+    async def _client(self, socket, transport=None):
         self.clients += 1
         print(f"Clients: {self.clients}")
         previous = {}
+        epoch = transport.epoch if transport else None
         event = asyncio.Event()
         self.wake_events.add(event)
         sent, since = 0, time.perf_counter()
@@ -160,6 +206,8 @@ class WebSocketBridge:
             diagnostic = asyncio.create_task(self._debug_status(socket))
         try:
             while not self.stop.is_set():
+                if transport and epoch != transport.epoch:
+                    previous = {}; epoch = transport.epoch
                 if socket.close_code is not None:
                     break
                 event.clear()
@@ -168,7 +216,7 @@ class WebSocketBridge:
                 for kind, payload in snapshots.items():
                     if payload != previous.get(kind):
                         # One replaceable snapshot per type, never a frame queue.
-                        await asyncio.wait_for(socket.send(payload), timeout=.25)
+                        await asyncio.wait_for(socket.send(transport.wrap(payload) if transport else payload), timeout=.25)
                         previous[kind] = payload
                         if kind == 'controller':
                             if self.debug:

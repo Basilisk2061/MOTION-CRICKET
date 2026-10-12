@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Vector3 } from 'three'
 import { watchTransport, isTransportHeartbeat } from './transportHealth'
+import { ConnectionGeneration } from './motionTransport'
 import { parsePhone, socketURL, type PhoneMessage } from './phone'
 import { parseBowlingRelease, parseBowlingPose, type BowlingPose, type BowlingRelease } from './bowlingController'
 
@@ -155,24 +156,28 @@ export function useController() {
   useEffect(() => {
     let disposed = false
     let socket: WebSocket | undefined
-    let retry: ReturnType<typeof setTimeout>
     let sequence = 0
     let rxCount=0,rxSince=performance.now()
     let opened = false
     let stopHealth = () => {}
+    const owner = new ConnectionGeneration()
     const connect = () => {
       if (disposed) return
       logTransport('CV', 'RECONNECT ATTEMPT / CONNECT')
-      socket = new WebSocket(socketURL('/cv-ws'))
-      stopHealth = watchTransport(socket)
-      socket.onopen = () => { connected.current = true; logTransport('CV', opened ? 'OPEN / RECONNECTED' : 'OPEN'); opened = true }
-      socket.onmessage = event => {
+      const generation = owner.begin()
+      const ws = new WebSocket(socketURL('/cv-ws')); socket = ws
+      const health = watchTransport(ws, undefined, undefined, generation, owner.reconnects, owner.stalls)
+      stopHealth = health
+      ws.onopen = () => { if (!owner.owns(generation)) return; connected.current = true; logTransport('CV', opened ? 'OPEN / RECONNECTED' : 'OPEN'); opened = true }
+      ws.onmessage = event => {
+        if (!owner.owns(generation)) return
         if (isTransportHeartbeat(event.data)) return
         if (relayDiagnostic(event.data)) return
         if (debugTransport) { debugCounts.current.cvRaw++; debugCounts.current.cvRawAt = performance.now() }
         const marker = typeof event.data === 'string' ? parseBat(event.data) : null
-        if (marker) bat.current = { message: marker, received: performance.now(), sequence: ++sequence }
         const message = typeof event.data === 'string' ? parseController(event.data) : null
+        if ((marker || message) && !health.accept(event.data)) return
+        if (marker) bat.current = { message: marker, received: performance.now(), sequence: ++sequence }
         if (message && (!latest.current || message.timestamp>latest.current.message.timestamp)) {
           if (debugTransport) debugCounts.current.cvAccepted++
           const now=performance.now()
@@ -182,14 +187,17 @@ export function useController() {
           latest.current = { message, received: performance.now(), sequence: ++sequence }
         }
       }
-      socket.onerror = () => { logTransport('CV', 'ERROR'); socket?.close() }
-      socket.onclose = event => {
+      ws.onerror = () => { if (owner.owns(generation)) { logTransport('CV', 'ERROR'); ws.close() } }
+      ws.onclose = event => {
+        if (!owner.owns(generation)) return
+        health()
+        owner.stalls = health.recoveries()
         logTransport('CV', `CLOSE code=${event.code} reason=${JSON.stringify(event.reason)} clean=${event.wasClean}`)
         connected.current = false
         latest.current = null
         telemetry.current.rxHz=0;rxCount=0;rxSince=performance.now()
         bat.current = null
-        if (!disposed) { logTransport('CV', 'RECONNECT SCHEDULED 1000ms'); retry = setTimeout(connect, 1000) }
+        if (!disposed) { logTransport('CV', 'RECONNECT SCHEDULED 1000ms'); owner.retry(generation, connect, event.reason) }
       }
     }
     connect()
@@ -209,8 +217,8 @@ export function useController() {
     }), 100)
     return () => {
       disposed = true
+      owner.dispose()
       stopHealth()
-      clearTimeout(retry)
       clearInterval(ui)
       clearInterval(diagnostic)
       connected.current = false
@@ -223,22 +231,27 @@ export function useController() {
     }
   }, [])
   useEffect(() => {
-    let disposed = false, socket: WebSocket, retry: ReturnType<typeof setTimeout>
+    let disposed = false, socket: WebSocket
     let opened = false
     let stopHealth = () => {}
+    const owner = new ConnectionGeneration()
     const connect = () => {
       if (disposed) return
       logTransport('PHONE', 'RECONNECT ATTEMPT / CONNECT')
-      socket = new WebSocket(socketURL('/phone-ws?role=game'))
-      stopHealth = watchTransport(socket)
-      phoneSocket.current = socket
-      socket.onopen = () => { logTransport('PHONE', opened ? 'OPEN / RECONNECTED' : 'OPEN'); opened = true }
-      socket.onmessage = event => {
+      const generation = owner.begin()
+      const ws = new WebSocket(socketURL('/phone-ws?role=game')); socket = ws
+      const health = watchTransport(ws, undefined, undefined, generation, owner.reconnects, owner.stalls, 'PHONE')
+      stopHealth = health
+      phoneSocket.current = ws
+      ws.onopen = () => { if (!owner.owns(generation)) return; logTransport('PHONE', opened ? 'OPEN / RECONNECTED' : 'OPEN'); opened = true }
+      ws.onmessage = event => {
+        if (!owner.owns(generation)) return
         if (isTransportHeartbeat(event.data)) return
         if (relayDiagnostic(event.data)) return
         if (debugTransport) { debugCounts.current.phoneRaw++; debugCounts.current.phoneRawAt = performance.now() }
         if (typeof event.data !== 'string') return
         const message = parsePhone(event.data)
+        if (message && !health.accept(event.data)) return
         if (message) { if (debugTransport) debugCounts.current.phoneAccepted++; phone.current = { message, received: performance.now() }; return }
         try {
           const status = JSON.parse(event.data)
@@ -253,15 +266,18 @@ export function useController() {
           }
         } catch { /* Ignore unrelated messages. */ }
       }
-      socket.onerror = () => { logTransport('PHONE', 'ERROR'); socket.close() }
-      socket.onclose = event => {
+      ws.onerror = () => { if (owner.owns(generation)) { logTransport('PHONE', 'ERROR'); ws.close() } }
+      ws.onclose = event => {
+        if (!owner.owns(generation)) return
+        health()
+        owner.stalls = health.recoveries()
         logTransport('PHONE', `CLOSE code=${event.code} reason=${JSON.stringify(event.reason)} clean=${event.wasClean}`)
         phoneConnected.current = false; phone.current = null
-        if (!disposed) { logTransport('PHONE', 'RECONNECT SCHEDULED 1000ms'); retry = setTimeout(connect, 1000) }
+        if (!disposed) { logTransport('PHONE', 'RECONNECT SCHEDULED 1000ms'); owner.retry(generation, connect, event.reason) }
       }
     }
     connect()
-    return () => { disposed = true; stopHealth(); clearTimeout(retry); socket?.close(); phoneSocket.current = null }
+    return () => { disposed = true; owner.dispose(); stopHealth(); socket?.close(); phoneSocket.current = null }
   }, [])
   return { latest, bat, phone, phoneConnected, connected, display, telemetry, bowlRequests, publishBowlReady,
     bowlingRelease,bowlingPose,publishBowlingLab }

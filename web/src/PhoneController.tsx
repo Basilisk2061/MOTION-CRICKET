@@ -6,6 +6,7 @@ import { BowlingController } from './bowlingController'
 import PhoneBowlingPanel from './PhoneBowlingPanel'
 import { PUBLIC_RELAY, currentSession } from './publicSession'
 import { watchTransport, isTransportHeartbeat } from './transportHealth'
+import { ConnectionGeneration, motionSequence as parseTransportSequence } from './motionTransport'
 
 type PermissionAPI = { requestPermission?: () => Promise<string> }
 const vector = (v: { x: number | null; y: number | null; z: number | null } | null) =>
@@ -34,32 +35,46 @@ export default function PhoneController() {
     const debug = new URLSearchParams(location.search).get('motionDebug') === '1'
     const log = (text: string) => { if (debug) console.info(`[${new Date().toISOString()}] PHONE SENDER ${text}`) }
     let attempted = 0, accepted = 0
+    const owner = new ConnectionGeneration()
+    let motionSequence = 0, epoch = '', producerMotion: {epoch: string; sequence: number} | null = null
     let stopHealth = () => {}
-    let disposed = false, retry: ReturnType<typeof setTimeout>, frame = 0, sent = -1, sentAt = 0, poseAt=0
+    let disposed = false, frame = 0, sent = -1, sentAt = 0, poseAt=0
     const connect = () => {
       if (disposed) return
       log('CONNECT / RECONNECT ATTEMPT')
+      const generation = owner.begin()
+      epoch = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2,'0')).join('')
+      motionSequence = 0; producerMotion = null
       const ws = new WebSocket(socketURL('/phone-ws?role=phone'))
-      stopHealth = watchTransport(ws)
+      const health = watchTransport(ws, undefined, () => producerMotion, generation, owner.reconnects, owner.stalls, 'PHONE')
+      stopHealth = health
       socket.current = ws
-      ws.onopen = () => { connected.current = true; sent = -1; log('OPEN') }
+      ws.onopen = () => { if (!owner.owns(generation)) return; connected.current = true; sent = -1; log('OPEN') }
       ws.onmessage = event => {
+        if (!owner.owns(generation)) return
         if (isTransportHeartbeat(event.data)) return
         try {
           const m = JSON.parse(event.data)
+          if (m.type === 'transport-resync' && parseTransportSequence({epoch:m.epoch, sequence:1}) && m.epoch !== epoch) {
+            epoch = m.epoch; motionSequence = 0; producerMotion = null; sent = -1
+            return
+          }
           if(m.type==='bowling-lab-state')lab.current={active:m.active===true,ready:m.ready===true,at:performance.now()}
           if (m.type === 'bowl-ready' && typeof m.ready === 'boolean')
             gameReady.current = { ready: m.ready, at: performance.now() }
         } catch { /* Ignore unrelated messages. */ }
       }
-      ws.onerror = () => { log('ERROR'); ws.close() }
+      ws.onerror = () => { if (owner.owns(generation)) { log('ERROR'); ws.close() } }
       ws.onclose = event => {
+        if (!owner.owns(generation)) return
+        health()
+        owner.stalls = health.recoveries()
         log(`CLOSE code=${event.code} reason=${JSON.stringify(event.reason)} clean=${event.wasClean}`)
         connected.current = false
         lab.current={active:false,ready:false,at:0}
         gameReady.current.ready = false
         if (event.code === 1008) setNotice('Another phone is connected. Close its controller page first.')
-        if (!disposed) { log('RECONNECT SCHEDULED 1000ms'); retry = setTimeout(connect, 1000) }
+        if (!disposed) { log('RECONNECT SCHEDULED 1000ms'); owner.retry(generation, connect, event.reason) }
       }
     }
     const tick = (now: number) => {
@@ -78,7 +93,8 @@ export default function PhoneController() {
       if (!document.hidden && ws?.readyState === WebSocket.OPEN && ws.bufferedAmount < 4096
         && d.message && now - d.at < 200 && sent !== d.sequence && now - sentAt >= 1000 / 60) {
         if (debug) attempted++
-        ws.send(JSON.stringify(d.message)); if (debug) accepted++; sent = d.sequence; sentAt = now
+        producerMotion = { epoch, sequence: ++motionSequence }
+        ws.send(JSON.stringify(PUBLIC_RELAY ? {...d.message, _transport: producerMotion} : d.message)); if (debug) accepted++; sent = d.sequence; sentAt = now
       }
       frame = requestAnimationFrame(tick)
     }
@@ -92,7 +108,8 @@ export default function PhoneController() {
       log(`sensorAge=${d.at ? Math.round(now-d.at)+'ms' : 'NONE'} WS=${ws ? ['CONNECTING','OPEN','CLOSING','CLOSED'][ws.readyState] : 'NONE'} attempted=${attempted} acceptedCalls=${accepted} buffered=${ws?.bufferedAmount ?? 0} suppressed=${reason}`)
     }, 1000) : undefined
     return () => {
-      disposed = true; clearTimeout(retry); clearInterval(ui); cancelAnimationFrame(frame)
+      disposed = true; clearInterval(ui); cancelAnimationFrame(frame)
+      owner.dispose()
       stopHealth()
       clearInterval(diagnostic)
       connected.current = false; socket.current?.close()

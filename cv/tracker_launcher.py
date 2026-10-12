@@ -249,13 +249,16 @@ def self_test(report):
     app.connect()
     assert app.worker is None and "valid" in app.status.get()
     app.session.set("K7P4AB")
+    from packaged_smoke import launcher_check, transport_check
+    import asyncio
+    checks = {**launcher_check(app), **asyncio.run(transport_check())}
     root.update()
     root.destroy()
     result = {"ok": True, "frozen": bool(getattr(sys, "frozen", False)), "model": str(MODEL_PATH),
               "python": sys.version, "prefix": sys.prefix, "cv2": cv2.__version__,
               "mediapipe": mp.__version__, "numpy": np.__version__, "websockets": websockets.__version__,
               "launcher": "opened/closed; invalid session rejected; valid session accepted",
-              "native_landmarker": "initialized; blank image processed; no webcam opened"}
+              "native_landmarker": "initialized; blank image processed; no webcam opened", "checks": checks}
     Path(report).write_text(json.dumps(result, indent=2), encoding="utf-8")
 
 

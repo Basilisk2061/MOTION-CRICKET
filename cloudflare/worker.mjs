@@ -2,9 +2,11 @@
 export const SESSION = /^[A-HJ-NP-Z2-9]{6}$/
 const TYPES = {
   phone: ['phone-controller', 'REQUEST_BOWL', 'BOWLING_POSE', 'BOWLING_RELEASE', 'transport-ping'],
-  tracker: ['controller', 'bat'],
-  game: ['bowl-ready', 'bowling-lab-state', 'transport-ping'],
+  tracker: ['controller', 'bat', 'transport-ping'],
+  game: ['bowl-ready', 'bowling-lab-state', 'transport-ping', 'transport-ack', 'transport-resync'],
 }
+const MOTION_TIMEOUT = 6000, WINDOW = 8
+const metadata = m => m && /^[a-f0-9]{32}$/.test(m.epoch ?? '') && Number.isSafeInteger(m.sequence) && m.sequence > 0
 export function connection(url) {
   const session = url.searchParams.get('session'), role = url.searchParams.get('role')
   const channel = role === 'game' ? url.searchParams.get('channel') : role
@@ -17,6 +19,10 @@ export function validMessage(role, data) {
     const m = JSON.parse(data)
     if (!m || !TYPES[role]?.includes(m.type)) return null
     if (m.type === 'transport-ping' && (!Number.isSafeInteger(m.sequence) || m.sequence < 1)) return null
+    if (m.type === 'transport-ack' && !metadata(m)) return null
+    if (m.type === 'transport-resync' && (!metadata({epoch:m.epoch,sequence:1}) || !metadata({epoch:m.previousEpoch,sequence:1}))) return null
+    if (m._transport && !metadata(m._transport)) return null
+    if (m.motion && !metadata(m.motion)) return null
     if (['controller', 'bat', 'phone-controller', 'BOWLING_POSE', 'BOWLING_RELEASE'].includes(m.type)
       && !Number.isFinite(m.timestamp)) return null
     if (m.type === 'bowl-ready' && typeof m.ready !== 'boolean') return null
@@ -51,7 +57,44 @@ export class Room {
     this.debug.at = Date.now()
     this.debugEvent({ event: 'COUNTERS', ...this.debug })
   }
-  sockets() { return this.ctx.getWebSockets().filter(ws => ws.readyState === 1) }
+  sockets() { return this.ctx.getWebSockets().filter(ws => ws.readyState === 1 && !ws.deserializeAttachment().retired) }
+  retire(ws, reason) {
+    const a = ws.deserializeAttachment(); a.retired = true; ws.serializeAttachment(a)
+    try { ws.close(4000, reason) } catch { /* Already disconnected. */ }
+  }
+  source(channel) { return this.sockets().find(ws => ws.deserializeAttachment().role === (channel === 'cv' ? 'tracker' : 'phone')) }
+  recipient(role) { return this.sockets().find(ws => { const a = ws.deserializeAttachment(); return a.role === 'game' && a.channel === (role === 'tracker' ? 'cv' : 'phone') }) }
+  motionStatus(ws) {
+    const a = ws.deserializeAttachment(), source = a.role === 'game' ? this.source(a.channel) : ws
+    if (!source) return null
+    const s = source.deserializeAttachment(), game = this.recipient(s.role)
+    if (!s.epoch || !s.produced) return null
+    return { epoch: s.epoch, sequence: s.produced, received: s.received ?? 0, acknowledged: s.ack ?? 0,
+      expected: !!game && Date.now() - s.producedAt < 6000 }
+  }
+  stalled(a) { return a.pendingAt && Date.now()-a.pendingAt > MOTION_TIMEOUT && Date.now()-a.producedAt < MOTION_TIMEOUT }
+  pump(source) {
+    const s = source.deserializeAttachment(), game = this.recipient(s.role)
+    if (!game) { s.latest = {}; s.pendingAt = null; source.serializeAttachment(s); return }
+    const g = game.deserializeAttachment()
+    if (s.requiredEpoch) {
+      if (Date.now()-s.recoveryAt > MOTION_TIMEOUT) { this.retire(game, 'Motion delivery stalled'); this.retire(source, 'Motion delivery stalled') }
+      return
+    }
+    if (g.epoch !== s.epoch) { g.epoch = s.epoch; g.inflight = [] }
+    if (this.stalled(s)) {
+      this.retire(game, 'Motion delivery stalled'); s.latest = {}; s.pendingAt = null
+      source.serializeAttachment(s); this.retire(source, 'Motion delivery stalled'); return
+    }
+    for (const entry of Object.values(s.latest ?? {}).sort((a,b)=>a.sequence-b.sequence)) {
+      if ((g.inflight ?? []).length >= (g.recovery ? 2 : WINDOW)) break
+      if (Date.now()-entry.at > 500 || entry.sequence <= (s.ack ?? 0)) { delete s.latest[entry.kind]; continue }
+      if (this.send(game, entry.data)) {
+        (g.inflight ??= []).push(entry.sequence); delete s.latest[entry.kind]; s.pendingAt ??= Date.now()
+      }
+    }
+    game.serializeAttachment(g); source.serializeAttachment(s)
+  }
   send(ws, data) {
     try {
       if (ws.readyState === 1 && (ws.bufferedAmount ?? 0) < 4096) {
@@ -60,11 +103,13 @@ export class Room {
           const a = ws.deserializeAttachment()
           if (a.role === 'game') this.debug[a.channel === 'cv' ? 'cvOut' : 'phoneOut']++
         }
+        return true
       } else if (this.debug) this.debug.drops++
     } catch {
       if (this.debug) { this.debug.errors++; this.debugEvent({ event: 'FORWARD_EXCEPTION', role: ws.deserializeAttachment().role }) }
       ws.close(1011, 'Connection unavailable')
     }
+    return false
   }
   games() { return this.sockets().filter(ws => ws.deserializeAttachment().channel === 'phone' && ws.deserializeAttachment().role === 'game') }
   phoneStatus() {
@@ -77,9 +122,9 @@ export class Room {
     // Only explicit heartbeat participants have leases. Never evict a healthy peer/other role.
     const sockets = this.sockets().filter(ws => {
       const a = ws.deserializeAttachment()
-      if (a.role === c.role && a.channel === c.channel && a.healthAt && Date.now()-a.healthAt > 6000) {
+      if (a.role === c.role && a.channel === c.channel && Date.now()-(a.healthAt ?? a.joinedAt ?? Date.now()) > 6000) {
         this.debugEvent({ event: 'STALE_REPLACEMENT', role: a.role, channel: a.channel })
-        try { ws.close(4000, 'Transport heartbeat stale') } catch { /* Already dead. */ }
+        this.retire(ws, 'Transport heartbeat stale')
         return false
       }
       return true
@@ -88,7 +133,13 @@ export class Room {
       return new Response('Role already connected', { status: 409 })
     const [client, server] = Object.values(new WebSocketPair())
     this.ctx.acceptWebSocket(server)
-    server.serializeAttachment({ ...c, debug: new URL(request.url).searchParams.get('motionDebug') === '1', ready: false, labActive: false, labReady: false, rateAt: Date.now(), count: 0 })
+    server.serializeAttachment({ ...c, joinedAt: Date.now(), debug: new URL(request.url).searchParams.get('motionDebug') === '1', ready: false, labActive: false, labReady: false, rateAt: Date.now(), count: 0 })
+    if (c.role === 'game') {
+      const source = this.source(c.channel)
+      if (source) {
+        const a = source.deserializeAttachment(); a.latest = {}; a.pendingAt = null; source.serializeAttachment(a)
+      }
+    }
     this.debugEvent({ event: 'JOIN', role: c.role, channel: c.channel })
     this.phoneStatus()
     if (c.role === 'phone') for (const game of this.games()) {
@@ -99,6 +150,7 @@ export class Room {
     return new Response(null, { status: 101, webSocket: client })
   }
   webSocketMessage(ws, data) {
+    if (!this.sockets().includes(ws)) return // Retired generations cannot reclaim roles or forward samples.
     if (!this.debug) this.debugEvent({ event: 'ROOM_ACTIVE / COUNTERS_RESET' })
     const a = ws.deserializeAttachment(), m = validMessage(a.role, data)
     if (!m) { ws.close(1008, 'Invalid message'); return }
@@ -107,12 +159,73 @@ export class Room {
     if (++a.count > 150) { ws.close(1008, 'Rate limit'); return }
     if (m.type === 'transport-ping') {
       a.healthAt = now; ws.serializeAttachment(a)
-      this.send(ws, { type: 'transport-pong', sequence: m.sequence })
+      if (a.role !== 'game' && m.motion) {
+        if (!a.epoch) a.epoch = m.motion.epoch
+        if (a.epoch === m.motion.epoch && m.motion.sequence > (a.produced ?? 0)) {
+          a.produced = m.motion.sequence; a.producedAt = now
+        }
+        if (this.recipient(a.role) && a.produced > (a.ack ?? 0)) a.pendingAt ??= now
+        ws.serializeAttachment(a)
+      }
+      const motion = this.motionStatus(ws)
+      this.send(ws, { type: 'transport-pong', sequence: m.sequence, ...(motion ? { motion } : {}) })
+      const source = a.role === 'game' ? this.source(a.channel) : ws
+      if (source) this.pump(source)
       this.debugSummary()
       return
     }
+    if (m.type === 'transport-ack') {
+      const source = this.source(a.channel)
+      if (!source) return
+      const s = source.deserializeAttachment()
+      if (s.epoch !== m.epoch || a.epoch !== m.epoch || !a.inflight?.includes(m.sequence)) return
+      if (m.sequence > (s.ack ?? 0)) { s.ack = m.sequence; s.pendingAt = null }
+      a.inflight = a.inflight.filter(sequence => sequence > m.sequence)
+      a.recovery = false // Fresh current-epoch end-to-end progress restores steady-state credit.
+      ws.serializeAttachment(a); source.serializeAttachment(s); this.pump(source)
+      return
+    }
+    if (m.type === 'transport-resync') {
+      const source = this.source(a.channel)
+      if (!source) return
+      const s = source.deserializeAttachment()
+      if (a.epoch === m.epoch && s.requiredEpoch === m.epoch) {
+        this.send(source, {type:'transport-resync',epoch:m.epoch}); return
+      }
+      if (a.epoch !== m.previousEpoch || m.epoch === m.previousEpoch) return
+      a.epoch = m.epoch; a.inflight = []; a.recovery = true
+      s.requiredEpoch = m.epoch; s.recoveryAt = now; s.latest = {}; s.pendingAt = null
+      ws.serializeAttachment(a); source.serializeAttachment(s)
+      this.send(source, {type:'transport-resync',epoch:m.epoch})
+      return
+    }
+    if (m._transport && ['controller', 'bat', 'phone-controller'].includes(m.type)) {
+      const meta = m._transport
+      if (a.requiredEpoch ? meta.epoch !== a.requiredEpoch : (a.epoch && a.epoch !== meta.epoch)) return
+      if (!a.requiredEpoch && meta.sequence <= (a.received ?? 0)) return
+    }
+    if (m._transport && ['controller', 'bat', 'phone-controller'].includes(m.type)) {
+      const meta = m._transport
+      if (a.requiredEpoch ? meta.epoch !== a.requiredEpoch : (a.epoch && a.epoch !== meta.epoch)) return
+      if (!a.requiredEpoch && meta.sequence <= (a.received ?? 0)) return
+    }
     if (this.debug && (a.role === 'tracker' || a.role === 'phone')) this.debug[a.role === 'tracker' ? 'trackerIn' : 'phoneIn']++
+    if (a.role !== 'game') a.healthAt = now // Legacy producers also prove their application lease with actual samples.
     ws.serializeAttachment(a)
+    if (m._transport && ['controller', 'bat', 'phone-controller'].includes(m.type)) {
+      const meta = m._transport
+      if (a.requiredEpoch) {
+        if (meta.epoch !== a.requiredEpoch) return
+        a.epoch = meta.epoch; a.received = a.produced = a.ack = 0
+        a.pendingAt = null; a.latest = {}; delete a.requiredEpoch
+      }
+      if (a.epoch && a.epoch !== meta.epoch) return
+      if (meta.sequence <= (a.received ?? 0)) return
+      a.epoch = meta.epoch; a.received = meta.sequence
+      if (meta.sequence > (a.produced ?? 0)) { a.produced = meta.sequence; a.producedAt = now }
+      a.latest ??= {}; a.latest[m.type] = { kind: m.type, sequence: meta.sequence, data, at: now }
+      ws.serializeAttachment(a); this.pump(ws); this.debugSummary(); return
+    }
     if (a.role === 'game') {
       if (a.channel !== 'phone') { ws.close(1008, 'Invalid channel'); return }
       if (m.type === 'bowl-ready') a.ready = m.ready
