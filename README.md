@@ -4,7 +4,7 @@
 
 A motion-controlled 3D cricket game where you physically move the bat rather than select a canned shot animation. A webcam tracks right-wrist position, while a smartphone's motion sensors supply bat orientation. The browser combines both inputs to drive the bat and resolve contact with the ball in real time.
 
-**[Public demo](https://play.motioncricket.workers.dev)** — open on your desktop, then use its phone setup QR/session link. Webcam input still requires the local Python tracker.
+**[Public demo](https://play.basilisk2061.workers.dev)** — open on your desktop, then use its phone setup QR/session link. Webcam input still requires the local Python tracker.
 
 <p align="center">
   <img src="docs/assets/gameplay-hero.png" alt="First-person Motion-Cricket gameplay with the bat, stadium, scoreboard and field map" width="100%">
