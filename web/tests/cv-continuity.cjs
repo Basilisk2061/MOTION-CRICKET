@@ -7,7 +7,19 @@ function load(name){
   cache.set(name,m.exports);return m.exports
 }
 const {HandleContinuity}=load('swingContinuity')
-const origin=new Vector3(.32,1.05,-.65),h=new HandleContinuity();h.reset(origin)
+const controller=load('controller'),origin=new Vector3(...controller.BASE_RIGHT_HAND_POSITION)
+assert.deepEqual(origin.toArray(),[.20,1.05,-.65],'neutral handle moves 12cm left, with height/depth unchanged')
+assert(controller.toPlayerPosition({x:0,y:0,z:0}).equals(origin),'calibrated zero maps to the shared neutral origin')
+assert.deepEqual(controller.HANDLE_RANGE.toArray(),[.65,.55,.20])
+assert.equal(controller.POSITION_SCALE,.45);assert.equal(controller.DEPTH_SCALE,.25)
+for(const p of [{x:0,y:0,z:0},{x:-.6,y:.2,z:.4},{x:.8,y:-.2,z:-.3},{x:100,y:100,z:100},{x:-100,y:-100,z:-100}]){
+  const previous=new Vector3(p.x*.45,p.y*.45,-p.z*.25)
+    .clamp(new Vector3(-.65,-.55,-.20),new Vector3(.65,.55,.20)).add(new Vector3(.32,1.05,-.65))
+  assert(controller.toPlayerPosition(p).distanceTo(previous.add(new Vector3(-.12,0,0)))<1e-12,'entire mapping translates without changing sensitivity or range')
+}
+const h=new HandleContinuity()
+assert(h.position.equals(origin),'authoritative handle initializes at the same origin')
+h.reset(origin)
 const sample=(id,position,extra={})=>({sampleId:id,sampleTime:id*33,received:id*33,position,velocity:null,...extra})
 for(let i=0;i<50;i++) {
   const position=origin.clone().add(new Vector3(i*.004,0,-i*.002))

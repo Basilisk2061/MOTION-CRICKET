@@ -22,7 +22,7 @@ export type ControllerMessage = {
 export const POSITION_SCALE = 0.45 // scene metres per calibrated shoulder width
 export const DEPTH_SCALE = 0.25 // modest depth; CV is already filtered
 export const HANDLE_RANGE = new Vector3(.65, .55, .20)
-export const BASE_RIGHT_HAND_POSITION: [number, number, number] = [0.32, 1.05, -0.65]
+export const BASE_RIGHT_HAND_POSITION: [number, number, number] = [0.20, 1.05, -0.65]
 export const STALE_MS = 500
 
 export type BatMessage = {
