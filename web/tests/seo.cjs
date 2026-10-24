@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto')
 const dir=path.resolve(__dirname,'..'),built=process.argv.includes('--built'),base=built?'dist':'public'
-const html=fs.readFileSync(path.join(dir,built?'dist/index.html':'index.html'),'utf8'),origin='https://play.motioncricket.workers.dev/'
+const html=fs.readFileSync(path.join(dir,built?'dist/index.html':'index.html'),'utf8'),origin='https://play.basilisk2061.workers.dev/'
 const meta=(key,value)=>{const m=html.match(new RegExp(`<meta ${key}="${value}" content="([^"]+)"`));assert(m,`${value} metadata`);return m[1]}
 assert(html.includes('<html lang="en">'));assert(meta('name','viewport').includes('width=device-width'))
 assert.equal(html.match(/<title>([^<]+)<\/title>/)[1],'Motion Cricket – Motion-Controlled Cricket Game')

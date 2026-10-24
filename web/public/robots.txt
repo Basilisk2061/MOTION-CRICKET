@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://play.motioncricket.workers.dev/sitemap.xml
+Sitemap: https://play.basilisk2061.workers.dev/sitemap.xml

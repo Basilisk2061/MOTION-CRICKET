@@ -49,7 +49,7 @@ assert.equal(tracker.a.healthAt,now,'Tracker owns the same application lease')
 const oldResponse=globalThis.Response
 globalThis.Response=class { constructor(body,options){this.status=options.status;this.body=body} }
 globalThis.WebSocketPair=class { constructor(){return {0:socket('client','client'),1:socket('tracker','tracker')}} }
-const request=new Request('https://play.motioncricket.workers.dev/relay?session=K7P4AB&role=tracker')
+const request=new Request('https://play.basilisk2061.workers.dev/relay?session=K7P4AB&role=tracker')
 assert.equal(room.fetch(request).status,409,'Healthy tracker cannot be evicted')
 now+=6001
 assert.equal(room.fetch(request).status,101,'Stale nominally OPEN tracker is replaced')

@@ -71,7 +71,7 @@ function run({duration=12000,faults=[],rtt=100,jitter=0,seed=17,suspend=null,mai
      })}}
     ws.server=server;return {0:ws,1:server}
    }}
-   const url=peer.owner.url(`https://play.motioncricket.workers.dev/relay?session=K7P4AB&role=${role}${producer?'':`&channel=${stream.toLowerCase()}`}`,true,generation)
+   const url=peer.owner.url(`https://play.basilisk2061.workers.dev/relay?session=K7P4AB&role=${role}${producer?'':`&channel=${stream.toLowerCase()}`}`,true,generation)
    const response=room.fetch(new Request(url));assert.equal(response.status,101,'Same owner replacement is never blocked by an OPEN zombie')
    later(delay(),()=>{ws.readyState=1;for(const f of ws.handlers.open??[])f();ws.onopen?.()})
   }
@@ -134,14 +134,14 @@ assert(new Set(active.applied.PHONE.filter(x=>x.at>7000).map(x=>x.orientation.y)
  const sockets=[],room=new Room({getWebSockets:()=>sockets,acceptWebSocket:s=>sockets.push(s)})
  const stub=()=>({readyState:1,a:{},messages:[],deserializeAttachment(){return structuredClone(this.a)},serializeAttachment(a){this.a=structuredClone(a)},send(d){this.messages.push(d)},close(){}})
  globalThis.WebSocketPair=class {constructor(){return {0:stub(),1:stub()}}}
- const request=(owner,generation)=>new Request(`https://play.motioncricket.workers.dev/relay?session=K7P4AB&role=phone&owner=${owner}&generation=${generation}`)
+ const request=(owner,generation)=>new Request(`https://play.basilisk2061.workers.dev/relay?session=K7P4AB&role=phone&owner=${owner}&generation=${generation}`)
  const owner='a'.repeat(32);assert.equal(room.fetch(request(owner,1)).status,101);const old=sockets[0]
  assert.equal(room.fetch(request('b'.repeat(32),2)).status,409,'Unrelated healthy owner is not evicted')
  assert.equal(room.fetch(request(owner,2)).status,101);const current=sockets[1]
  room.webSocketClose(old,4000,'late close');assert.equal(room.source('phone'),current)
  room.webSocketMessage(old,JSON.stringify({type:'transport-ping',sequence:999}));assert.equal(room.source('phone'),current)
  assert.equal(room.fetch(request(owner,1)).status,409,'Older generation cannot rejoin')
- const gameRequest=new Request('https://play.motioncricket.workers.dev/relay?session=K7P4AB&role=game&channel=cv&owner='+ 'c'.repeat(32)+'&generation=1')
+ const gameRequest=new Request('https://play.basilisk2061.workers.dev/relay?session=K7P4AB&role=game&channel=cv&owner='+ 'c'.repeat(32)+'&generation=1')
  assert.equal(room.fetch(gameRequest).status,101)
  room.webSocketClose(current,4000,'closed');current.readyState=3
  const restored=new Room({getWebSockets:()=>sockets,acceptWebSocket:s=>sockets.push(s)})

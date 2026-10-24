@@ -171,7 +171,7 @@ motion-cricket/
 For the public demo, open the desktop site and use the session link/QR in phone setup. To add webcam position, use the displayed tracker commands, or set these variables from your cloned repository root before running the existing tracker:
 
 ```powershell
-$env:MOTION_RELAY_URL = 'wss://play.motioncricket.workers.dev/relay'
+$env:MOTION_RELAY_URL = 'wss://play.basilisk2061.workers.dev/relay'
 $env:MOTION_SESSION = '<six-character-code-shown-by-the-game>'
 .\cv\.venv\Scripts\python.exe .\cv\main.py
 ```
